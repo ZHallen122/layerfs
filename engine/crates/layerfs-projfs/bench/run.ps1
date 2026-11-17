@@ -265,11 +265,11 @@ function Sessions($fx) {
             Row $name 'projfs' 'disk-after-listing' $run 'free_space_delta' ($before - (Free)) 'bytes' 'OK' 'volume free space before minus after; includes whatever else the system wrote'
             OnDisk $name 'disk-after-listing' $run $root
             Row $name 'projfs' 'list-second' $run 'wall' (Listing $root) 'ms'
-            Row $name 'projfs' 'git-status-first' $run 'wall' (Status $root) 'ms' 'OK' 'creates a placeholder for every file'
+            Row $name 'projfs' 'git-status-first' $run 'wall' (Status $root) 'ms' 'OK' 'first git status on the fresh mount'
             Row $name 'projfs' 'disk-after-git-status' $run 'free_space_delta' ($before - (Free)) 'bytes'
             OnDisk $name 'disk-after-git-status' $run $root
             Row $name 'projfs' 'git-status-second' $run 'wall' (Status $root) 'ms'
-            Row $name 'projfs' 'rg-first' $run 'wall' (Search $root) 'ms' 'OK' 'hydrates every file it reads'
+            Row $name 'projfs' 'rg-first' $run 'wall' (Search $root) 'ms' 'OK' 'first search on the mount; every file it reads is hydrated'
             Row $name 'projfs' 'disk-after-rg' $run 'free_space_delta' ($before - (Free)) 'bytes'
             OnDisk $name 'disk-after-rg' $run $root
             Row $name 'projfs' 'rg-second' $run 'wall' (Search $root) 'ms'
