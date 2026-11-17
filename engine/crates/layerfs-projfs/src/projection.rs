@@ -256,13 +256,42 @@ impl Projection {
     /// Stops serving and removes the root and the state directory: every
     /// uncommitted change is gone.
     pub fn discard(mut self) -> Result<(), MountError> {
-        // A placeholder that was never hydrated cannot be deleted once no
-        // provider runs. So the local items are deleted first, while this
-        // provider still serves and shows its own process only the disk;
-        // what that leaves (tombstones) goes after the stop.
+        // Once no provider runs, some items cannot be deleted (a placeholder
+        // that was never hydrated, an empty hydrated file: error 369). So
+        // the files on disk are removed first, while this provider still
+        // serves and shows its own process only the disk. The provider's
+        // own delete leaves no tombstone and raises no notification, one
+        // operation per file. What it does not take (tombstones, which are
+        // invisible until the stop, and the directories that hold them) is
+        // removed after the stop, when it can be.
         {
             let _local = self.provider.local_only();
-            let _ = remove_tree(&self.root);
+            let mut local = Local::new(&self.root);
+            let flags = sys::ALLOW_DIRTY_METADATA
+                | sys::ALLOW_DIRTY_DATA
+                | sys::ALLOW_TOMBSTONE
+                | sys::ALLOW_READ_ONLY;
+            let mut pending = vec![String::new()];
+            while let Some(directory) = pending.pop() {
+                let items = local
+                    .list(&directory)
+                    .map_err(io("list", &self.root))?
+                    .unwrap_or_default();
+                for item in items {
+                    let path = crate::provider::tree::join(&directory, &item.name);
+                    if item.directory {
+                        pending.push(path);
+                        continue;
+                    }
+                    let name = path.replace('/', "\\");
+                    if !matches!(self.instance().delete_item(&name, flags), Ok(true)) {
+                        // Not the provider's to delete: an ordinary delete.
+                        // A failure is left for the pass below to report.
+                        let _ =
+                            std::fs::remove_file(crate::track::local::native(&self.root, &path));
+                    }
+                }
+            }
         }
         self.instance = None;
         remove_tree(&self.root).map_err(io("remove", &self.root))?;
