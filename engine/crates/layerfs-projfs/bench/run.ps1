@@ -67,6 +67,8 @@ function GitIn([string]$Directory, [string[]]$Arguments) {
 # ---- build ---------------------------------------------------------------
 Push-Location $Repo
 $built = Native 'cargo' @('build', '--release', '--locked', '-p', 'layerfs-projfs')
+# Asked inside the checkout, so a directory override of the toolchain shows.
+$Rustc = (Native 'rustc' @('--version')).Output
 Pop-Location
 if ($built.Code -ne 0) { throw "cargo build failed: $($built.Output)" }
 $Bin = Join-Path $Repo 'target\release\layerfs-projfs.exe'
@@ -124,7 +126,7 @@ $environment = [ordered]@{
     commit                = $SourceCommit
     dirty                 = $SourceDirty
     binary_sha256         = (Get-FileHash $Bin -Algorithm SHA256).Hash
-    rustc                 = (Native 'rustc' @('--version')).Output
+    rustc                 = $Rustc
     os                    = "$($os.Caption) $($os.Version)"
     cpu                   = $cpu.Name.Trim()
     cores                 = $cpu.NumberOfCores
@@ -187,9 +189,10 @@ function Prepare([string]$Name) {
     $files = @(Get-ChildItem -LiteralPath $source -Recurse -File -Force | Where-Object { $_.FullName -notlike '*\.git\*' })
     if (-not (Test-Path $store)) {
         $import = Ms { $script:imported = Lfs @('init', '--store', $store, '--project', 'bench', '--branch', 'work', '--import', $source) }
-        if ($script:imported.Code -ne 0) { throw "import failed: $($script:imported.Text)" }
-        Row $Name 'projfs' 'store-import' 1 'wall' $import 'ms' 'OK' "setup: $($script:imported.Json.files) files incl .git; $($script:imported.Json.bytes) bytes; skipped $(@($script:imported.Json.skipped).Count)"
-        Row $Name 'projfs' 'store-import' 1 'store_file' (Get-Item $store).Length 'bytes'
+        if ($script:imported.Code -ne 0) { throw "Project Init failed: $($script:imported.Text)" }
+        Row $Name 'projfs' 'store-init' 1 'wall' $import 'ms' 'OK' "setup: Project Init of the source tree with .git; $($script:imported.Json.entries) entries"
+        Row $Name 'projfs' 'store-init' 1 'internal' $script:imported.Json.elapsed_ms 'ms'
+        Row $Name 'projfs' 'store-init' 1 'store_file' (Get-Item $store).Length 'bytes'
     }
     $relative = @($files | ForEach-Object { $_.FullName.Substring($source.Length + 1) } | Sort-Object)
     [pscustomobject]@{
