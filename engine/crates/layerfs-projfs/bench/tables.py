@@ -113,7 +113,7 @@ def sections(directory):
             f"| Windows | {environment['os']} |",
             f"| Defender real-time scanning | **{'on' if environment['defender_realtime'] is True else environment['defender_realtime']}** "
             f"(tamper protection: {str(environment['defender_tamper']).lower()}) |",
-            f"| Tools | {environment['git']}; {environment['ripgrep']} |",
+            f"| Tools | {environment['git'].strip()}; {environment['ripgrep'].strip()} |",
             f"| LayerFS through WSL2 + Docker | {environment['wsl2_docker_layerfs']} |",
         ]
     )
