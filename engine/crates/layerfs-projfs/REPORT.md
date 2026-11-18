@@ -79,11 +79,15 @@ Read this first. Each item is explained where it is linked.
 
 **Found on the way**
 
-- **Every file the Workspace has read holds 64 KiB of the volume, whatever
-  its size** (section 7.5). A Workspace of the medium fixture in which a
-  search had read nearly every file took about 3.2 GiB of the volume for
-  under 0.2 GiB of content. The space returns at discard. Whether a provider can avoid this
-  was not established; it has to be answered before ProjFS is chosen.
+- **Every file the Workspace has read holds whole units of 64 KiB on the
+  volume** (section 7.5): a file under 64 KiB holds 64 KiB. A Workspace of
+  the medium fixture in which a search had read nearly every file took about
+  3.2 GiB of the volume for under 0.2 GiB of content. The space returns at
+  discard. This was then examined. The files do not show as sparse, and
+  everything that releases the space also turns the file into a full file,
+  which the provider can no longer treat as unchanged. The provider was
+  therefore not changed, and the cost stands as measured. It has to be
+  weighed before ProjFS is chosen.
 - A real bug in this prototype, found by the benchmark and fixed before the
   reported run: one file in 256 could not be read (section 7.8).
 - An intermittent failure of an existing test on unmodified `main`
@@ -324,8 +328,9 @@ Each Workspace is one provider process, one engine binding with its own
 overlay file, and a directory holding only what was looked at, read or
 written. Nothing is shared between Workspaces on disk except the Store.
 Section 7.5 has the measured disk and memory for 1, 4 and 16. It also has
-the cost that was not expected: a file that has been read holds 64 KiB of
-the volume however small it is.
+the cost that was not expected: a file that has been read holds whole units
+of 64 KiB on the volume however small it is, for as long as it stays a
+placeholder.
 
 Memory: the provider keeps every directory listing it has served (cleared
 wholesale past 8,192 directories) and no file content. The Store's object
@@ -334,8 +339,9 @@ cache is the engine's.
 ## 5. M0 and M1: what passes
 
 `cargo test --locked -p layerfs-projfs` on Windows 11 build 26200, rustc
-1.85.1: **41 tests, 41 passed** (five of them are the child-process entry
-points, which do nothing in an ordinary run). Every edit a test makes "as an
+1.85.1: **44 tests, 44 passed** (six of them are the child-process entry
+points, which do nothing in an ordinary run; the clean-checkout run of
+section 9 was made before `tests/allocation.rs` existed and has 41). Every edit a test makes "as an
 application" is made by a child process.
 
 M0, a plain directory projected (`tests/m0_projection.rs`):
@@ -395,9 +401,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File engine\crates\layerfs-projfs
 ```
 
 It was run once, from a fresh clone of this branch, into an empty work
-directory. Its output is kept unedited in `bench/results/20261118T001312Z/`:
+directory. Its output is kept as written in `bench/results/20261118T001312Z/`:
 `raw.csv` (one row per measurement), `environment.json`, `fixtures.json`, and
-the script's own `summary.csv` and `summary.md`.
+the script's own `summary.csv` and `summary.md`. One edit was made afterwards:
+the user profile directory in `environment.json`'s `work_directory` is
+written as `%USERPROFILE%`. The script now records it that way itself.
 
 How to read the tables:
 
@@ -735,18 +743,59 @@ time, which is why it can be negative; one sample of the medium copy saw the
 volume gain over 100 GiB from some other activity. Read it as a rough
 cross-check, not as a measurement of one directory.
 
-**A hydrated file costs 64 KiB of the volume, whatever its size.** The free
+**A hydrated file holds whole units of 64 KiB on the volume.** The free
 space rows after `rg` show it: far more space is gone than the content
-explains. A separate check (`bench/allocation-check.ps1`, output in
+explains. `bench/allocation-check.ps1` (output in
 `results/allocation-check.txt`) asked NTFS for each file's extents on the
-small fixture: all 1,000 hydrated files hold exactly 16 clusters of 4,096
-bytes, where the same files in the plain tree hold 1 or 2. The space comes
-back at discard. So a Workspace in which every file has been read uses much
-more of the volume than a full copy, even though it holds the same content.
-Whether this is how the ProjFS filter writes file data in general, or follows
-from how this provider hands it over (one `PrjWriteFileData` call for a file under
-1 MiB), was not established. It is the most important disk result of this
-prototype and needs an answer before ProjFS is chosen.
+small fixture. All 1,000 hydrated files hold exactly 16 clusters of 4,096
+bytes, where the same files in the plain tree hold 1 or 2: 65,536,000 bytes
+of the volume against 6,385,664. A larger file holds its size rounded up to
+the next 16 clusters (a 200,000-byte file holds 64). The space comes back at
+discard. So a Workspace of small files that have all been read uses much
+more of the volume than a full copy of the same content.
+
+*Is the file sparse?* Units of 16 clusters are how NTFS allocates a sparse
+file, so the first guess was that ProjFS leaves hydrated files sparse and
+that clearing the flag would release the space. It is not that simple:
+
+- `fsutil sparse queryflag` answers "NOT set as sparse" for every hydrated
+  file asked, and the provider's own process does not see the sparse
+  attribute on them either.
+- The allocation still behaves like a sparse file's. A placeholder that has
+  been opened and not yet read already shows one extent of 16 clusters with
+  no clusters behind it.
+- Clearing the flag anyway (`FSCTL_SET_SPARSE`, off, from the provider's own
+  process, through a handle that can only write attributes) succeeds and
+  releases the space. The file is a **full file** afterwards, no longer a
+  placeholder.
+
+*What releases the space.* Everything that was tried and released it also
+made the file a full file: the request above; another process opening the
+file for writing and writing nothing; the provider's own process doing the
+same; the provider setting the file's length to the length it has. What left
+the file a placeholder left the space reserved: the provider reading the
+file, or opening it only to write attributes (which marks the placeholder
+dirty and releases nothing). In the diagnostic, opening all 1,000 hydrated
+files for writing from another process took them from 65,536,000 bytes of
+the volume to 6,385,664, exactly the plain tree's, and the provider then
+counted 1,000 full files and no change in `status`.
+
+*What follows.* As far as these tests go, the reserved space belongs to the
+placeholder state: a file cannot be both a placeholder and compact. The
+provider could release the space by making every file it has handed over a
+full file, and one version of it did (a thread that opened each such file
+for writing). It was removed. The design relies on a hydrated placeholder
+being known to equal the base, so that status, Commit, the baseline update
+after a merge and the scan after a crash never read it; a full file is one
+the Workspace may have changed. An unchanged full file would be skipped by
+the baseline update and keep old content after the Branch moves. A product
+could make the trade with a durable record of which full files are
+unchanged copies. That is not built here.
+
+So the provider is unchanged, the M3 disk cases were not rerun, and the
+numbers in this section stand. The observations are asserted by
+`tests/allocation.rs`; the raw output of the probes is
+`results/allocation-probe.txt`.
 
 A listing alone puts directories on disk and no file content. After
 `git status` on the medium fixture 42 files have content. Which files was not
@@ -919,8 +968,8 @@ Only what the tables above support:
   involved in reading a file, and a full search is level with a copy (small
   fixture) or about a quarter slower (medium).
 - A Commit's cost follows what changed. Build outputs count as changes.
-- Disk follows what was read or written, with the 64 KiB per hydrated file
-  above. On the medium fixture a Workspace that was only listed and
+- Disk follows what was read or written, with the 64 KiB units per
+  hydrated file above. On the medium fixture a Workspace that was only listed and
   `git status`-ed is several times smaller than a copy; one that was searched
   whole took about 3.2 GiB of the volume, against under 0.3 GiB for a copy.
 - Each mounted Workspace is a process of a few tens of MiB.
@@ -975,9 +1024,10 @@ every run reported here.
 - While the provider is down the directory is partly usable and partly not,
   and applications see errors 369 and 372.
 - Tombstones surface as watcher events.
-- A file that has been read held 64 KiB of the volume whatever its size
-  (7.5). Seen with this provider; whether another way of handing over the
-  data avoids it was not tested.
+- A file that has been read holds whole units of 64 KiB on the volume for
+  as long as it is a placeholder (7.5). Releasing the space makes it a full
+  file. No way to have both was found; the tests were made with this
+  provider on one Windows build.
 - ReFS / Dev Drive needs the filter attached by an administrator.
 - The optional feature must be enabled by an administrator, with a restart.
 
@@ -1030,6 +1080,13 @@ the log is `results/clean-checkout.txt`:
 | `python tools/check_product_boundary.py --skip-sdk` | PASS, 856 production files scanned |
 | `bench/run.ps1` | finished, 1,347 rows, 0 FAILED (section 7) |
 
+After that run one test file was added, `tests/allocation.rs` (section 7.5),
+and no product source changed: `git diff bbf880c68 5b21a183f --
+engine/crates/layerfs-projfs/src` is empty. So the benchmark was not run
+again. At `5b21a183f` on Windows: `cargo test --locked -p layerfs-projfs`,
+44 passed, 0 failed, 0 ignored; Clippy with `-D warnings`, no finding; the
+guard, PASS with 856 files.
+
 `--skip-sdk` leaves the Node binding and the JavaScript packages out of the
 guard's scan, as the repository's CI does. `cargo fmt -p layerfs-projfs --
 --check` is clean on Windows; `cargo fmt --all` could not be run there
@@ -1056,24 +1113,24 @@ is empty: `cargo test -p layerfs-projfs` builds and runs no test, and its
 Clippy is clean.
 
 **Linux, the final code.** The code changed after `9a4fee4ca`, only inside
-this crate. So the final code commit `2d195c092` was checked again on Linux for
-what could differ (`results/linux-head-check.txt`):
+this crate. So the last commit that touches anything but this report,
+`5b21a183f`, was checked again on Linux for what could differ
+(`results/linux-head-check.txt`):
 
 ```text
-    head 2d195c092; toolchain: cargo 1.85.1 (d73d2caf9 2024-12-31) / rustc 1.85.1 (4eb161250 2025-03-15) / Linux 6.6.87.1-microsoft-standard-WSL2
+    head 5b21a183f; toolchain: cargo 1.85.1 (d73d2caf9 2024-12-31) / rustc 1.85.1 (4eb161250 2025-03-15) / Linux 6.6.87.1-microsoft-standard-WSL2
     files outside engine/crates/layerfs-projfs changed since 9a4fee4ca: []
     fmt exit=0
     guard exit=0       1 PASS: scanned 993 production Rust/SQL/JavaScript files; semantic review still required;
     guard-tests exit=0       1 OK;      1 Ran 157 tests ;
     build-projfs exit=0       1     Finished `dev` profile [unoptimized + debuginfo] target(s) ;
-    test-projfs exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) ;     11 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0
+    test-projfs exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) ;     12 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0
     clippy-projfs exit=0       1     Finished `dev` profile [unoptimized + debuginfo] target(s) ;
     done
     exit=0
 ```
 
-The commits after `2d195c092` change only this report, the result records
-and one line of `bench/tables.py`.
+The commit after `5b21a183f` changes only this report and that record.
 
 **An intermittent failure on unmodified `main`.** In the very first Linux
 comparison, made for the first version of this prototype with rustc 1.98.0,
@@ -1136,7 +1193,7 @@ is clear:
 ## 11. Source layout
 
 Scope: the new crate's production source, `engine/crates/layerfs-projfs/src`,
-at commit `2d195c092`. The numbers are the production lines (`prod`) of
+at commit `5b21a183f`. The numbers are the production lines (`prod`) of
 `tools/production_loc.py --files`. Every file is new against the base. The
 listing shows the tree as it is, so no line carries a change marker.
 
@@ -1180,7 +1237,7 @@ listing shows the tree as it is, so no line carries a change marker.
       record.rs                            40   (the mount's state file)
 ```
 
-Tests are outside `src/` and are not counted: `tests/` holds eight test files
+Tests are outside `src/` and are not counted: `tests/` holds nine test files
 and `tests/support/`. The benchmark scripts are in `bench/`, the kept records
 in `results/` and `bench/results/`.
 
@@ -1205,7 +1262,7 @@ what ProjFS did here and from WinFsp's documentation.
 | Hard links | Identity not projectable. | WinFsp documents no hard-link support either. |
 | Case sensitivity | Insensitive only. | WinFsp can present a case-sensitive file system; Windows applications would still mostly assume otherwise. |
 | Provider or file system process dies | Files already on disk stay readable; nothing written is lost. | Likely the mount disappears until it restarts; unsynced overlay state follows the overlay's own rules. |
-| Disk | Only what was read or written, plus full files kept after Commit. Each file read held 64 KiB (7.5). | Only the overlay. No hydrated copies. |
+| Disk | Only what was read or written, plus full files kept after Commit. Each file read holds whole units of 64 KiB while it is a placeholder (7.5). | Only the overlay. No hydrated copies. |
 | Installation | A Windows optional feature, enabled by an administrator. No third-party driver. | A third-party signed driver to install and keep updated. |
 | Tool compatibility | Git, ripgrep, cargo and a watcher worked unmodified. Tombstones leak into watcher events. | Depends on how much NTFS behavior the implementation covers. |
 | Engine reuse | Mount, capture and baseline code are new (this crate). | The FUSE adapter's shape would likely carry over; Windows open, delete and cache rules would be the new work. |
