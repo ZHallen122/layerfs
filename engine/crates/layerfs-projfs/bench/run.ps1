@@ -36,6 +36,14 @@ $SourceDirty = [bool](& git -C $Repo status --porcelain)
 if (-not $Out) { $Out = Join-Path $PSScriptRoot "results\$RunId" }
 New-Item -ItemType Directory -Force $Out, $Work | Out-Null
 $Raw = Join-Path $Out 'raw.csv'
+# A Workspace directory an interrupted run left behind has no provider, and
+# its placeholders cannot be deleted without one. Measuring beside it would
+# fail a case halfway, so nothing is measured until the work directory holds
+# fixtures only. To clear one: `layerfs-projfs resume`, then `discard`.
+$Leftover = @(Get-ChildItem -LiteralPath $Work -Force | Where-Object { $_.Name -notlike 'fx-*' })
+if ($Leftover.Count) {
+    throw "the work directory $Work holds leftovers of an earlier run: $(($Leftover | ForEach-Object Name) -join ', ')"
+}
 'fixture,setup,case,run,metric,value,unit,status,note' | Set-Content -Encoding utf8 $Raw
 $Drive = New-Object System.IO.DriveInfo ((Resolve-Path $Work).Path.Substring(0, 1))
 
