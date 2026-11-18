@@ -1,0 +1,45 @@
+# The clean-checkout run of 2026-11-17: a fresh clone, the tests, lint, the guard, then bench/run.ps1.
+# Log of the driver script. Windows 11 Home 10.0.26200. The only edit: the user profile
+# directory in two printed paths is written as %USERPROFILE%.
+
+clean checkout at bbf880c684338c69f93a5cc1a426cb1d81597832, dirty: []
+toolchain: cargo 1.85.1 (d73d2caf9 2024-12-31) / rustc 1.85.1 (4eb161250 2025-03-15)
+    Finished `test` profile [optimized + debuginfo] target(s) in 52.01s
+     Running unittests src\lib.rs (target\debug\deps\layerfs_projfs-11996b3285024427.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src\bin\layerfs-projfs.rs (target\debug\deps\layerfs_projfs-11a3308b1de2ebba.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\cli.rs (target\debug\deps\cli-dcf743393d4655fa.exe)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.88s
+     Running tests\content_identity.rs (target\debug\deps\content_identity-1f45a60287ad654f.exe)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests\m0_projection.rs (target\debug\deps\m0_projection-611313ee3399c2ff.exe)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.50s
+     Running tests\m1_workspace.rs (target\debug\deps\m1_workspace-5a6083c1e02af505.exe)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
+     Running tests\m2_names.rs (target\debug\deps\m2_names-4a8a3d2201636f1e.exe)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.85s
+     Running tests\m2_processes.rs (target\debug\deps\m2_processes-24bc585bd0e215c5.exe)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.34s
+     Running tests\store_smoke.rs (target\debug\deps\store_smoke-bbc1553f966d986d.exe)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+     Running tests\store_snapshot.rs (target\debug\deps\store_snapshot-bc1720f49a157b84.exe)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+tests exit: 0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.54s
+PASS: scanned 856 production Rust/SQL/JavaScript files; semantic review still required
+== benchmark
+[19:13:55] fixture small
+[19:30:22] fixture medium
+[20:58:06] fixture build
+raw data: %USERPROFILE%\AppData\Local\Temp\lfs-final\engine\crates\layerfs-projfs\bench\results\20261118T001312Z\raw.csv
+summary: %USERPROFILE%\AppData\Local\Temp\lfs-final\engine\crates\layerfs-projfs\bench\results\20261118T001312Z\summary.md
+benchmark exit: 0
+finished
+
+# git status --porcelain in the clone after the run (untracked files only):
+?? engine/crates/layerfs-projfs/bench/results/
+?? m2-clean.tsv
+# git diff --stat HEAD in the clone (tracked files):
+(empty: no tracked file differs)

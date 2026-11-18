@@ -1,0 +1,8 @@
+bench/allocation-check.ps1 on the small fixture, 2026-11-17, binary of commit bbf880c68 (release), Defender real-time scanning on.
+A diagnostic, one pass, not a benchmark.
+
+volume C: cluster size 4096 bytes
+volume free space used after rg read every file: 66633728 bytes
+Workspace, hydrated: files=1000 content_bytes=4411999 allocated_bytes=65536000 (1000 files hold 16 clusters)
+plain source tree:   files=1000 content_bytes=4411999 allocated_bytes=6385664 (559 files hold 2 clusters; 441 files hold 1 clusters)
+volume free space used after discard: 331776 bytes

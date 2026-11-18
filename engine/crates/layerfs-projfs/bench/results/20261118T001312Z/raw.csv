@@ -1,0 +1,1348 @@
+﻿fixture,setup,case,run,metric,value,unit,status,note
+small,projfs,store-init,1,wall,2972.818,ms,OK,setup: Project Init of the source tree with .git; 2391 entries
+small,projfs,store-init,1,internal,2503.815,ms,OK,
+small,projfs,store-init,1,store_file,2981888,bytes,OK,
+small,projfs,mount-cold,1,wall,65.634,ms,OK,process start to ready; Store file cache purged by an unbuffered open (best effort)
+small,projfs,mount-cold,1,internal,30.867,ms,OK,Store open + bind + ProjFS start
+small,projfs,mount-cold,1,store_open,9.899,ms,OK,
+small,projfs,list-first,1,wall,716.16,ms,OK,fresh mount
+small,projfs,disk-after-listing,1,free_space_delta,303104,bytes,OK,volume free space before minus after; includes whatever else the system wrote
+small,projfs,disk-after-listing,1,on_disk_bytes,0,bytes,OK,content bytes of hydrated and full files
+small,projfs,disk-after-listing,1,on_disk_placeholders,0,count,OK,
+small,projfs,disk-after-listing,1,on_disk_hydrated,0,count,OK,
+small,projfs,disk-after-listing,1,on_disk_full,0,count,OK,
+small,projfs,disk-after-listing,1,on_disk_directories,315,count,OK,
+small,projfs,list-second,1,wall,255.058,ms,OK,
+small,projfs,git-status-first,1,wall,53.742,ms,OK,first git status on the fresh mount
+small,projfs,disk-after-git-status,1,free_space_delta,835584,bytes,OK,
+small,projfs,disk-after-git-status,1,on_disk_bytes,83421,bytes,OK,content bytes of hydrated and full files
+small,projfs,disk-after-git-status,1,on_disk_placeholders,0,count,OK,
+small,projfs,disk-after-git-status,1,on_disk_hydrated,7,count,OK,
+small,projfs,disk-after-git-status,1,on_disk_full,0,count,OK,
+small,projfs,disk-after-git-status,1,on_disk_directories,315,count,OK,
+small,projfs,git-status-second,1,wall,31.324,ms,OK,
+small,projfs,rg-first,1,wall,310.429,ms,OK,first search on the mount; every file it reads is hydrated
+small,projfs,disk-after-rg,1,free_space_delta,67108864,bytes,OK,
+small,projfs,disk-after-rg,1,on_disk_bytes,4495420,bytes,OK,content bytes of hydrated and full files
+small,projfs,disk-after-rg,1,on_disk_placeholders,0,count,OK,
+small,projfs,disk-after-rg,1,on_disk_hydrated,1007,count,OK,
+small,projfs,disk-after-rg,1,on_disk_full,0,count,OK,
+small,projfs,disk-after-rg,1,on_disk_directories,315,count,OK,
+small,projfs,rg-second,1,wall,92.283,ms,OK,
+small,projfs,session,1,placeholders_served,1898,count,OK,
+small,projfs,session,1,read_bytes_served,4495420,bytes,OK,
+small,projfs,session,1,provider_peak_working_set,22577152,bytes,OK,
+small,projfs,session,1,provider_cpu,1125,ms,OK,
+small,projfs,discard-hydrated,1,wall,236.719,ms,OK,
+small,projfs,discard-hydrated,1,internal,221.870,ms,OK,
+small,projfs,mount-warm,1,wall,36.582,ms,OK,process start to ready; right after a session on the same Store
+small,projfs,mount-warm,1,internal,18.191,ms,OK,
+small,projfs,mount-warm,1,provider_peak_working_set,18837504,bytes,OK,
+small,projfs,mount-warm,1,provider_cpu,15.625,ms,OK,
+small,projfs,discard-fresh,1,wall,21.498,ms,OK,
+small,projfs,discard-fresh,1,internal,5.019,ms,OK,
+small,copy,create,1,wall,1421.837,ms,OK,robocopy /E of the source tree with .git
+small,copy,disk-after-create,1,free_space_delta,12492800,bytes,OK,
+small,copy,disk-after-create,1,tree_bytes,5645419,bytes,OK,sum of file lengths
+small,copy,disk-after-create,1,tree_files,2075,count,OK,
+small,copy,list-first,1,wall,141.813,ms,OK,fresh copy
+small,copy,list-second,1,wall,118.308,ms,OK,
+small,copy,git-status-first,1,wall,28.941,ms,OK,fresh copy
+small,copy,git-status-second,1,wall,28.434,ms,OK,
+small,copy,rg-first,1,wall,94.843,ms,OK,fresh copy
+small,copy,rg-second,1,wall,105.373,ms,OK,
+small,copy,remove,1,wall,493.683,ms,OK,
+small,worktree,create,1,wall,570.977,ms,OK,git worktree add --detach
+small,worktree,disk-after-create,1,free_space_delta,6684672,bytes,OK,
+small,worktree,disk-after-create,1,tree_bytes,4412085,bytes,OK,sum of file lengths
+small,worktree,disk-after-create,1,tree_files,1001,count,OK,
+small,worktree,list-first,1,wall,56.624,ms,OK,fresh worktree
+small,worktree,list-second,1,wall,56.617,ms,OK,
+small,worktree,git-status-first,1,wall,50.719,ms,OK,fresh worktree
+small,worktree,git-status-second,1,wall,47.137,ms,OK,
+small,worktree,rg-first,1,wall,104.702,ms,OK,fresh worktree
+small,worktree,rg-second,1,wall,99.748,ms,OK,
+small,worktree,remove,1,wall,128.927,ms,OK,
+small,ntfs,list-first,1,wall,92.39,ms,OK,the source tree itself; file cache as the previous steps left it
+small,ntfs,list-second,1,wall,78.725,ms,OK,
+small,ntfs,git-status-first,1,wall,24.118,ms,OK,the source tree itself; file cache as the previous steps left it
+small,ntfs,git-status-second,1,wall,21.267,ms,OK,
+small,ntfs,rg-first,1,wall,69.31,ms,OK,the source tree itself; file cache as the previous steps left it
+small,ntfs,rg-second,1,wall,65.106,ms,OK,
+small,projfs,mount-cold,2,wall,43.688,ms,OK,process start to ready; Store file cache purged by an unbuffered open (best effort)
+small,projfs,mount-cold,2,internal,21.356,ms,OK,Store open + bind + ProjFS start
+small,projfs,mount-cold,2,store_open,6.773,ms,OK,
+small,projfs,list-first,2,wall,579.73,ms,OK,fresh mount
+small,projfs,disk-after-listing,2,free_space_delta,290816,bytes,OK,volume free space before minus after; includes whatever else the system wrote
+small,projfs,disk-after-listing,2,on_disk_bytes,0,bytes,OK,content bytes of hydrated and full files
+small,projfs,disk-after-listing,2,on_disk_placeholders,0,count,OK,
+small,projfs,disk-after-listing,2,on_disk_hydrated,0,count,OK,
+small,projfs,disk-after-listing,2,on_disk_full,0,count,OK,
+small,projfs,disk-after-listing,2,on_disk_directories,315,count,OK,
+small,projfs,list-second,2,wall,192.579,ms,OK,
+small,projfs,git-status-first,2,wall,45.123,ms,OK,first git status on the fresh mount
+small,projfs,disk-after-git-status,2,free_space_delta,815104,bytes,OK,
+small,projfs,disk-after-git-status,2,on_disk_bytes,83421,bytes,OK,content bytes of hydrated and full files
+small,projfs,disk-after-git-status,2,on_disk_placeholders,0,count,OK,
+small,projfs,disk-after-git-status,2,on_disk_hydrated,7,count,OK,
+small,projfs,disk-after-git-status,2,on_disk_full,0,count,OK,
+small,projfs,disk-after-git-status,2,on_disk_directories,315,count,OK,
+small,projfs,git-status-second,2,wall,29.035,ms,OK,
+small,projfs,rg-first,2,wall,394.386,ms,OK,first search on the mount; every file it reads is hydrated
+small,projfs,disk-after-rg,2,free_space_delta,67145728,bytes,OK,
+small,projfs,disk-after-rg,2,on_disk_bytes,4495420,bytes,OK,content bytes of hydrated and full files
+small,projfs,disk-after-rg,2,on_disk_placeholders,0,count,OK,
+small,projfs,disk-after-rg,2,on_disk_hydrated,1007,count,OK,
+small,projfs,disk-after-rg,2,on_disk_full,0,count,OK,
+small,projfs,disk-after-rg,2,on_disk_directories,315,count,OK,
+small,projfs,rg-second,2,wall,94.967,ms,OK,
+small,projfs,session,2,placeholders_served,1898,count,OK,
+small,projfs,session,2,read_bytes_served,4495420,bytes,OK,
+small,projfs,session,2,provider_peak_working_set,22593536,bytes,OK,
+small,projfs,session,2,provider_cpu,984.375,ms,OK,
+small,projfs,discard-hydrated,2,wall,238.007,ms,OK,
+small,projfs,discard-hydrated,2,internal,224.420,ms,OK,
+small,projfs,mount-warm,2,wall,37.915,ms,OK,process start to ready; right after a session on the same Store
+small,projfs,mount-warm,2,internal,18.547,ms,OK,
+small,projfs,mount-warm,2,provider_peak_working_set,18571264,bytes,OK,
+small,projfs,mount-warm,2,provider_cpu,15.625,ms,OK,
+small,projfs,discard-fresh,2,wall,26.898,ms,OK,
+small,projfs,discard-fresh,2,internal,5.696,ms,OK,
+small,copy,create,2,wall,1340.144,ms,OK,robocopy /E of the source tree with .git
+small,copy,disk-after-create,2,free_space_delta,13012992,bytes,OK,
+small,copy,disk-after-create,2,tree_bytes,5645419,bytes,OK,sum of file lengths
+small,copy,disk-after-create,2,tree_files,2075,count,OK,
+small,copy,list-first,2,wall,131.981,ms,OK,fresh copy
+small,copy,list-second,2,wall,110.189,ms,OK,
+small,copy,git-status-first,2,wall,26.912,ms,OK,fresh copy
+small,copy,git-status-second,2,wall,28.468,ms,OK,
+small,copy,rg-first,2,wall,98.184,ms,OK,fresh copy
+small,copy,rg-second,2,wall,96.27,ms,OK,
+small,copy,remove,2,wall,469.433,ms,OK,
+small,worktree,create,2,wall,501.792,ms,OK,git worktree add --detach
+small,worktree,disk-after-create,2,free_space_delta,7540736,bytes,OK,
+small,worktree,disk-after-create,2,tree_bytes,4412085,bytes,OK,sum of file lengths
+small,worktree,disk-after-create,2,tree_files,1001,count,OK,
+small,worktree,list-first,2,wall,52.257,ms,OK,fresh worktree
+small,worktree,list-second,2,wall,45.392,ms,OK,
+small,worktree,git-status-first,2,wall,83.119,ms,OK,fresh worktree
+small,worktree,git-status-second,2,wall,65.436,ms,OK,
+small,worktree,rg-first,2,wall,92.272,ms,OK,fresh worktree
+small,worktree,rg-second,2,wall,91.571,ms,OK,
+small,worktree,remove,2,wall,126.378,ms,OK,
+small,ntfs,list-first,2,wall,82.972,ms,OK,the source tree itself; file cache as the previous steps left it
+small,ntfs,list-second,2,wall,78.681,ms,OK,
+small,ntfs,git-status-first,2,wall,22.71,ms,OK,the source tree itself; file cache as the previous steps left it
+small,ntfs,git-status-second,2,wall,25.985,ms,OK,
+small,ntfs,rg-first,2,wall,66.68,ms,OK,the source tree itself; file cache as the previous steps left it
+small,ntfs,rg-second,2,wall,71.22,ms,OK,
+small,projfs,mount-cold,3,wall,47.973,ms,OK,process start to ready; Store file cache purged by an unbuffered open (best effort)
+small,projfs,mount-cold,3,internal,22.794,ms,OK,Store open + bind + ProjFS start
+small,projfs,mount-cold,3,store_open,7.292,ms,OK,
+small,projfs,list-first,3,wall,618.533,ms,OK,fresh mount
+small,projfs,disk-after-listing,3,free_space_delta,733184,bytes,OK,volume free space before minus after; includes whatever else the system wrote
+small,projfs,disk-after-listing,3,on_disk_bytes,0,bytes,OK,content bytes of hydrated and full files
+small,projfs,disk-after-listing,3,on_disk_placeholders,0,count,OK,
+small,projfs,disk-after-listing,3,on_disk_hydrated,0,count,OK,
+small,projfs,disk-after-listing,3,on_disk_full,0,count,OK,
+small,projfs,disk-after-listing,3,on_disk_directories,315,count,OK,
+small,projfs,list-second,3,wall,233.547,ms,OK,
+small,projfs,git-status-first,3,wall,48.592,ms,OK,first git status on the fresh mount
+small,projfs,disk-after-git-status,3,free_space_delta,1257472,bytes,OK,
+small,projfs,disk-after-git-status,3,on_disk_bytes,83421,bytes,OK,content bytes of hydrated and full files
+small,projfs,disk-after-git-status,3,on_disk_placeholders,0,count,OK,
+small,projfs,disk-after-git-status,3,on_disk_hydrated,7,count,OK,
+small,projfs,disk-after-git-status,3,on_disk_full,0,count,OK,
+small,projfs,disk-after-git-status,3,on_disk_directories,315,count,OK,
+small,projfs,git-status-second,3,wall,51.755,ms,OK,
+small,projfs,rg-first,3,wall,338.993,ms,OK,first search on the mount; every file it reads is hydrated
+small,projfs,disk-after-rg,3,free_space_delta,67641344,bytes,OK,
+small,projfs,disk-after-rg,3,on_disk_bytes,4495420,bytes,OK,content bytes of hydrated and full files
+small,projfs,disk-after-rg,3,on_disk_placeholders,0,count,OK,
+small,projfs,disk-after-rg,3,on_disk_hydrated,1007,count,OK,
+small,projfs,disk-after-rg,3,on_disk_full,0,count,OK,
+small,projfs,disk-after-rg,3,on_disk_directories,315,count,OK,
+small,projfs,rg-second,3,wall,98.033,ms,OK,
+small,projfs,session,3,placeholders_served,1898,count,OK,
+small,projfs,session,3,read_bytes_served,4495420,bytes,OK,
+small,projfs,session,3,provider_peak_working_set,22347776,bytes,OK,
+small,projfs,session,3,provider_cpu,1156.25,ms,OK,
+small,projfs,discard-hydrated,3,wall,236.749,ms,OK,
+small,projfs,discard-hydrated,3,internal,220.175,ms,OK,
+small,projfs,mount-warm,3,wall,34.39,ms,OK,process start to ready; right after a session on the same Store
+small,projfs,mount-warm,3,internal,16.985,ms,OK,
+small,projfs,mount-warm,3,provider_peak_working_set,18731008,bytes,OK,
+small,projfs,mount-warm,3,provider_cpu,15.625,ms,OK,
+small,projfs,discard-fresh,3,wall,20.649,ms,OK,
+small,projfs,discard-fresh,3,internal,4.235,ms,OK,
+small,copy,create,3,wall,1378.734,ms,OK,robocopy /E of the source tree with .git
+small,copy,disk-after-create,3,free_space_delta,3051520,bytes,OK,
+small,copy,disk-after-create,3,tree_bytes,5645419,bytes,OK,sum of file lengths
+small,copy,disk-after-create,3,tree_files,2075,count,OK,
+small,copy,list-first,3,wall,110.125,ms,OK,fresh copy
+small,copy,list-second,3,wall,81.246,ms,OK,
+small,copy,git-status-first,3,wall,21.763,ms,OK,fresh copy
+small,copy,git-status-second,3,wall,22.217,ms,OK,
+small,copy,rg-first,3,wall,86.025,ms,OK,fresh copy
+small,copy,rg-second,3,wall,90.478,ms,OK,
+small,copy,remove,3,wall,459.078,ms,OK,
+small,worktree,create,3,wall,500.206,ms,OK,git worktree add --detach
+small,worktree,disk-after-create,3,free_space_delta,6684672,bytes,OK,
+small,worktree,disk-after-create,3,tree_bytes,4412085,bytes,OK,sum of file lengths
+small,worktree,disk-after-create,3,tree_files,1001,count,OK,
+small,worktree,list-first,3,wall,49.397,ms,OK,fresh worktree
+small,worktree,list-second,3,wall,40.084,ms,OK,
+small,worktree,git-status-first,3,wall,71.457,ms,OK,fresh worktree
+small,worktree,git-status-second,3,wall,67.905,ms,OK,
+small,worktree,rg-first,3,wall,128.14,ms,OK,fresh worktree
+small,worktree,rg-second,3,wall,93.16,ms,OK,
+small,worktree,remove,3,wall,130.668,ms,OK,
+small,ntfs,list-first,3,wall,78.722,ms,OK,the source tree itself; file cache as the previous steps left it
+small,ntfs,list-second,3,wall,79.87,ms,OK,
+small,ntfs,git-status-first,3,wall,23.203,ms,OK,the source tree itself; file cache as the previous steps left it
+small,ntfs,git-status-second,3,wall,23.512,ms,OK,
+small,ntfs,rg-first,3,wall,61.171,ms,OK,the source tree itself; file cache as the previous steps left it
+small,ntfs,rg-second,3,wall,77.202,ms,OK,
+small,projfs,mount-cold,4,wall,44.295,ms,OK,process start to ready; Store file cache purged by an unbuffered open (best effort)
+small,projfs,mount-cold,4,internal,22.037,ms,OK,Store open + bind + ProjFS start
+small,projfs,mount-cold,4,store_open,6.770,ms,OK,
+small,projfs,list-first,4,wall,545.416,ms,OK,fresh mount
+small,projfs,disk-after-listing,4,free_space_delta,356352,bytes,OK,volume free space before minus after; includes whatever else the system wrote
+small,projfs,disk-after-listing,4,on_disk_bytes,0,bytes,OK,content bytes of hydrated and full files
+small,projfs,disk-after-listing,4,on_disk_placeholders,0,count,OK,
+small,projfs,disk-after-listing,4,on_disk_hydrated,0,count,OK,
+small,projfs,disk-after-listing,4,on_disk_full,0,count,OK,
+small,projfs,disk-after-listing,4,on_disk_directories,315,count,OK,
+small,projfs,list-second,4,wall,242.525,ms,OK,
+small,projfs,git-status-first,4,wall,47.835,ms,OK,first git status on the fresh mount
+small,projfs,disk-after-git-status,4,free_space_delta,1404928,bytes,OK,
+small,projfs,disk-after-git-status,4,on_disk_bytes,83421,bytes,OK,content bytes of hydrated and full files
+small,projfs,disk-after-git-status,4,on_disk_placeholders,0,count,OK,
+small,projfs,disk-after-git-status,4,on_disk_hydrated,7,count,OK,
+small,projfs,disk-after-git-status,4,on_disk_full,0,count,OK,
+small,projfs,disk-after-git-status,4,on_disk_directories,315,count,OK,
+small,projfs,git-status-second,4,wall,40.478,ms,OK,
+small,projfs,rg-first,4,wall,302.081,ms,OK,first search on the mount; every file it reads is hydrated
+small,projfs,disk-after-rg,4,free_space_delta,67145728,bytes,OK,
+small,projfs,disk-after-rg,4,on_disk_bytes,4495420,bytes,OK,content bytes of hydrated and full files
+small,projfs,disk-after-rg,4,on_disk_placeholders,0,count,OK,
+small,projfs,disk-after-rg,4,on_disk_hydrated,1007,count,OK,
+small,projfs,disk-after-rg,4,on_disk_full,0,count,OK,
+small,projfs,disk-after-rg,4,on_disk_directories,315,count,OK,
+small,projfs,rg-second,4,wall,99.441,ms,OK,
+small,projfs,session,4,placeholders_served,1898,count,OK,
+small,projfs,session,4,read_bytes_served,4495420,bytes,OK,
+small,projfs,session,4,provider_peak_working_set,22708224,bytes,OK,
+small,projfs,session,4,provider_cpu,1031.25,ms,OK,
+small,projfs,discard-hydrated,4,wall,279.489,ms,OK,
+small,projfs,discard-hydrated,4,internal,264.284,ms,OK,
+small,projfs,mount-warm,4,wall,52.08,ms,OK,process start to ready; right after a session on the same Store
+small,projfs,mount-warm,4,internal,27.944,ms,OK,
+small,projfs,mount-warm,4,provider_peak_working_set,18685952,bytes,OK,
+small,projfs,mount-warm,4,provider_cpu,31.25,ms,OK,
+small,projfs,discard-fresh,4,wall,30.888,ms,OK,
+small,projfs,discard-fresh,4,internal,6.478,ms,OK,
+small,copy,create,4,wall,1520.595,ms,OK,robocopy /E of the source tree with .git
+small,copy,disk-after-create,4,free_space_delta,12492800,bytes,OK,
+small,copy,disk-after-create,4,tree_bytes,5645419,bytes,OK,sum of file lengths
+small,copy,disk-after-create,4,tree_files,2075,count,OK,
+small,copy,list-first,4,wall,122.091,ms,OK,fresh copy
+small,copy,list-second,4,wall,108.639,ms,OK,
+small,copy,git-status-first,4,wall,36.425,ms,OK,fresh copy
+small,copy,git-status-second,4,wall,36.005,ms,OK,
+small,copy,rg-first,4,wall,122.833,ms,OK,fresh copy
+small,copy,rg-second,4,wall,104.594,ms,OK,
+small,copy,remove,4,wall,490.275,ms,OK,
+small,worktree,create,4,wall,546.671,ms,OK,git worktree add --detach
+small,worktree,disk-after-create,4,free_space_delta,7278592,bytes,OK,
+small,worktree,disk-after-create,4,tree_bytes,4412085,bytes,OK,sum of file lengths
+small,worktree,disk-after-create,4,tree_files,1001,count,OK,
+small,worktree,list-first,4,wall,52.406,ms,OK,fresh worktree
+small,worktree,list-second,4,wall,42.162,ms,OK,
+small,worktree,git-status-first,4,wall,58.907,ms,OK,fresh worktree
+small,worktree,git-status-second,4,wall,54.463,ms,OK,
+small,worktree,rg-first,4,wall,111.02,ms,OK,fresh worktree
+small,worktree,rg-second,4,wall,100.017,ms,OK,
+small,worktree,remove,4,wall,132.1,ms,OK,
+small,ntfs,list-first,4,wall,72.596,ms,OK,the source tree itself; file cache as the previous steps left it
+small,ntfs,list-second,4,wall,84.167,ms,OK,
+small,ntfs,git-status-first,4,wall,26.081,ms,OK,the source tree itself; file cache as the previous steps left it
+small,ntfs,git-status-second,4,wall,27.75,ms,OK,
+small,ntfs,rg-first,4,wall,63.097,ms,OK,the source tree itself; file cache as the previous steps left it
+small,ntfs,rg-second,4,wall,78.774,ms,OK,
+small,projfs,mount-cold,5,wall,53.303,ms,OK,process start to ready; Store file cache purged by an unbuffered open (best effort)
+small,projfs,mount-cold,5,internal,28.344,ms,OK,Store open + bind + ProjFS start
+small,projfs,mount-cold,5,store_open,9.755,ms,OK,
+small,projfs,list-first,5,wall,746.927,ms,OK,fresh mount
+small,projfs,disk-after-listing,5,free_space_delta,409600,bytes,OK,volume free space before minus after; includes whatever else the system wrote
+small,projfs,disk-after-listing,5,on_disk_bytes,0,bytes,OK,content bytes of hydrated and full files
+small,projfs,disk-after-listing,5,on_disk_placeholders,0,count,OK,
+small,projfs,disk-after-listing,5,on_disk_hydrated,0,count,OK,
+small,projfs,disk-after-listing,5,on_disk_full,0,count,OK,
+small,projfs,disk-after-listing,5,on_disk_directories,315,count,OK,
+small,projfs,list-second,5,wall,210.717,ms,OK,
+small,projfs,git-status-first,5,wall,50.504,ms,OK,first git status on the fresh mount
+small,projfs,disk-after-git-status,5,free_space_delta,933888,bytes,OK,
+small,projfs,disk-after-git-status,5,on_disk_bytes,83421,bytes,OK,content bytes of hydrated and full files
+small,projfs,disk-after-git-status,5,on_disk_placeholders,0,count,OK,
+small,projfs,disk-after-git-status,5,on_disk_hydrated,7,count,OK,
+small,projfs,disk-after-git-status,5,on_disk_full,0,count,OK,
+small,projfs,disk-after-git-status,5,on_disk_directories,315,count,OK,
+small,projfs,git-status-second,5,wall,47.508,ms,OK,
+small,projfs,rg-first,5,wall,333.62,ms,OK,first search on the mount; every file it reads is hydrated
+small,projfs,disk-after-rg,5,free_space_delta,67198976,bytes,OK,
+small,projfs,disk-after-rg,5,on_disk_bytes,4495420,bytes,OK,content bytes of hydrated and full files
+small,projfs,disk-after-rg,5,on_disk_placeholders,0,count,OK,
+small,projfs,disk-after-rg,5,on_disk_hydrated,1007,count,OK,
+small,projfs,disk-after-rg,5,on_disk_full,0,count,OK,
+small,projfs,disk-after-rg,5,on_disk_directories,315,count,OK,
+small,projfs,rg-second,5,wall,98.618,ms,OK,
+small,projfs,session,5,placeholders_served,1898,count,OK,
+small,projfs,session,5,read_bytes_served,4495420,bytes,OK,
+small,projfs,session,5,provider_peak_working_set,22786048,bytes,OK,
+small,projfs,session,5,provider_cpu,1281.25,ms,OK,
+small,projfs,discard-hydrated,5,wall,255.536,ms,OK,
+small,projfs,discard-hydrated,5,internal,240.810,ms,OK,
+small,projfs,mount-warm,5,wall,35.36,ms,OK,process start to ready; right after a session on the same Store
+small,projfs,mount-warm,5,internal,18.399,ms,OK,
+small,projfs,mount-warm,5,provider_peak_working_set,18681856,bytes,OK,
+small,projfs,mount-warm,5,provider_cpu,46.875,ms,OK,
+small,projfs,discard-fresh,5,wall,29.596,ms,OK,
+small,projfs,discard-fresh,5,internal,5.437,ms,OK,
+small,copy,create,5,wall,1410.45,ms,OK,robocopy /E of the source tree with .git
+small,copy,disk-after-create,5,free_space_delta,12488704,bytes,OK,
+small,copy,disk-after-create,5,tree_bytes,5645419,bytes,OK,sum of file lengths
+small,copy,disk-after-create,5,tree_files,2075,count,OK,
+small,copy,list-first,5,wall,133.468,ms,OK,fresh copy
+small,copy,list-second,5,wall,112.7,ms,OK,
+small,copy,git-status-first,5,wall,35.741,ms,OK,fresh copy
+small,copy,git-status-second,5,wall,30.692,ms,OK,
+small,copy,rg-first,5,wall,124.45,ms,OK,fresh copy
+small,copy,rg-second,5,wall,99.348,ms,OK,
+small,copy,remove,5,wall,447.67,ms,OK,
+small,worktree,create,5,wall,480.79,ms,OK,git worktree add --detach
+small,worktree,disk-after-create,5,free_space_delta,7208960,bytes,OK,
+small,worktree,disk-after-create,5,tree_bytes,4412085,bytes,OK,sum of file lengths
+small,worktree,disk-after-create,5,tree_files,1001,count,OK,
+small,worktree,list-first,5,wall,50.039,ms,OK,fresh worktree
+small,worktree,list-second,5,wall,39.574,ms,OK,
+small,worktree,git-status-first,5,wall,74.981,ms,OK,fresh worktree
+small,worktree,git-status-second,5,wall,22.982,ms,OK,
+small,worktree,rg-first,5,wall,91.486,ms,OK,fresh worktree
+small,worktree,rg-second,5,wall,86.988,ms,OK,
+small,worktree,remove,5,wall,132.738,ms,OK,
+small,ntfs,list-first,5,wall,82.009,ms,OK,the source tree itself; file cache as the previous steps left it
+small,ntfs,list-second,5,wall,77.991,ms,OK,
+small,ntfs,git-status-first,5,wall,20.233,ms,OK,the source tree itself; file cache as the previous steps left it
+small,ntfs,git-status-second,5,wall,20.946,ms,OK,
+small,ntfs,rg-first,5,wall,54.464,ms,OK,the source tree itself; file cache as the previous steps left it
+small,ntfs,rg-second,5,wall,75.412,ms,OK,
+small,projfs,commit-1,1,wall,46.108,ms,OK,1 files appended to; 6999 bytes in them
+small,projfs,commit-1,1,internal,10.105,ms,OK,
+small,projfs,commit-1,1,bytes_read,6999,bytes,OK,
+small,projfs,commit-1,1,bytes_written,6999,bytes,OK,
+small,projfs,status-after-commit-1,1,wall,28.645,ms,OK,
+small,projfs,commit-1,1,provider_peak_working_set,23068672,bytes,OK,
+small,projfs,commit-1,1,provider_cpu,46.875,ms,OK,
+small,projfs,discard-after-commit-1,1,wall,21.944,ms,OK,
+small,projfs,discard-after-commit-1,1,internal,6.156,ms,OK,
+small,worktree,git-commit-1,1,wall,435.314,ms,OK,reference: git add -A + git commit; not the same operation
+small,projfs,commit-1,2,wall,29.923,ms,OK,1 files appended to; 6999 bytes in them
+small,projfs,commit-1,2,internal,7.636,ms,OK,
+small,projfs,commit-1,2,bytes_read,6999,bytes,OK,
+small,projfs,commit-1,2,bytes_written,6999,bytes,OK,
+small,projfs,status-after-commit-1,2,wall,14.187,ms,OK,
+small,projfs,commit-1,2,provider_peak_working_set,22958080,bytes,OK,
+small,projfs,commit-1,2,provider_cpu,46.875,ms,OK,
+small,projfs,discard-after-commit-1,2,wall,21.843,ms,OK,
+small,projfs,discard-after-commit-1,2,internal,5.174,ms,OK,
+small,worktree,git-commit-1,2,wall,147.645,ms,OK,reference: git add -A + git commit; not the same operation
+small,projfs,commit-1,3,wall,28.707,ms,OK,1 files appended to; 6999 bytes in them
+small,projfs,commit-1,3,internal,7.569,ms,OK,
+small,projfs,commit-1,3,bytes_read,6999,bytes,OK,
+small,projfs,commit-1,3,bytes_written,6999,bytes,OK,
+small,projfs,status-after-commit-1,3,wall,15.824,ms,OK,
+small,projfs,commit-1,3,provider_peak_working_set,23068672,bytes,OK,
+small,projfs,commit-1,3,provider_cpu,0,ms,OK,
+small,projfs,discard-after-commit-1,3,wall,19.98,ms,OK,
+small,projfs,discard-after-commit-1,3,internal,5.524,ms,OK,
+small,worktree,git-commit-1,3,wall,318.845,ms,OK,reference: git add -A + git commit; not the same operation
+small,projfs,commit-1,4,wall,39.786,ms,OK,1 files appended to; 6999 bytes in them
+small,projfs,commit-1,4,internal,12.570,ms,OK,
+small,projfs,commit-1,4,bytes_read,6999,bytes,OK,
+small,projfs,commit-1,4,bytes_written,6999,bytes,OK,
+small,projfs,status-after-commit-1,4,wall,20.91,ms,OK,
+small,projfs,commit-1,4,provider_peak_working_set,22917120,bytes,OK,
+small,projfs,commit-1,4,provider_cpu,62.5,ms,OK,
+small,projfs,discard-after-commit-1,4,wall,25.53,ms,OK,
+small,projfs,discard-after-commit-1,4,internal,7.629,ms,OK,
+small,worktree,git-commit-1,4,wall,442.964,ms,OK,reference: git add -A + git commit; not the same operation
+small,projfs,commit-1,5,wall,28.698,ms,OK,1 files appended to; 6999 bytes in them
+small,projfs,commit-1,5,internal,8.951,ms,OK,
+small,projfs,commit-1,5,bytes_read,6999,bytes,OK,
+small,projfs,commit-1,5,bytes_written,6999,bytes,OK,
+small,projfs,status-after-commit-1,5,wall,13.793,ms,OK,
+small,projfs,commit-1,5,provider_peak_working_set,22851584,bytes,OK,
+small,projfs,commit-1,5,provider_cpu,46.875,ms,OK,
+small,projfs,discard-after-commit-1,5,wall,15.407,ms,OK,
+small,projfs,discard-after-commit-1,5,internal,4.930,ms,OK,
+small,worktree,git-commit-1,5,wall,408.69,ms,OK,reference: git add -A + git commit; not the same operation
+small,projfs,commit-100,1,wall,75.447,ms,OK,100 files appended to; 456118 bytes in them
+small,projfs,commit-100,1,internal,54.648,ms,OK,
+small,projfs,commit-100,1,bytes_read,456118,bytes,OK,
+small,projfs,commit-100,1,bytes_written,456118,bytes,OK,
+small,projfs,status-after-commit-100,1,wall,22.838,ms,OK,
+small,projfs,commit-100,1,provider_peak_working_set,25411584,bytes,OK,
+small,projfs,commit-100,1,provider_cpu,125,ms,OK,
+small,projfs,discard-after-commit-100,1,wall,29.622,ms,OK,
+small,projfs,discard-after-commit-100,1,internal,14.970,ms,OK,
+small,worktree,git-commit-100,1,wall,593.009,ms,OK,reference: git add -A + git commit; not the same operation
+small,projfs,commit-100,2,wall,77.149,ms,OK,100 files appended to; 456118 bytes in them
+small,projfs,commit-100,2,internal,56.514,ms,OK,
+small,projfs,commit-100,2,bytes_read,456118,bytes,OK,
+small,projfs,commit-100,2,bytes_written,456118,bytes,OK,
+small,projfs,status-after-commit-100,2,wall,26.182,ms,OK,
+small,projfs,commit-100,2,provider_peak_working_set,25296896,bytes,OK,
+small,projfs,commit-100,2,provider_cpu,187.5,ms,OK,
+small,projfs,discard-after-commit-100,2,wall,30.396,ms,OK,
+small,projfs,discard-after-commit-100,2,internal,16.032,ms,OK,
+small,worktree,git-commit-100,2,wall,477.457,ms,OK,reference: git add -A + git commit; not the same operation
+small,projfs,commit-100,3,wall,74.994,ms,OK,100 files appended to; 456118 bytes in them
+small,projfs,commit-100,3,internal,55.427,ms,OK,
+small,projfs,commit-100,3,bytes_read,456118,bytes,OK,
+small,projfs,commit-100,3,bytes_written,456118,bytes,OK,
+small,projfs,status-after-commit-100,3,wall,19.746,ms,OK,
+small,projfs,commit-100,3,provider_peak_working_set,25427968,bytes,OK,
+small,projfs,commit-100,3,provider_cpu,125,ms,OK,
+small,projfs,discard-after-commit-100,3,wall,32.154,ms,OK,
+small,projfs,discard-after-commit-100,3,internal,15.496,ms,OK,
+small,worktree,git-commit-100,3,wall,587.003,ms,OK,reference: git add -A + git commit; not the same operation
+small,projfs,commit-100,4,wall,82.755,ms,OK,100 files appended to; 456118 bytes in them
+small,projfs,commit-100,4,internal,61.623,ms,OK,
+small,projfs,commit-100,4,bytes_read,456118,bytes,OK,
+small,projfs,commit-100,4,bytes_written,456118,bytes,OK,
+small,projfs,status-after-commit-100,4,wall,21.463,ms,OK,
+small,projfs,commit-100,4,provider_peak_working_set,25710592,bytes,OK,
+small,projfs,commit-100,4,provider_cpu,125,ms,OK,
+small,projfs,discard-after-commit-100,4,wall,32.648,ms,OK,
+small,projfs,discard-after-commit-100,4,internal,16.618,ms,OK,
+small,worktree,git-commit-100,4,wall,544.295,ms,OK,reference: git add -A + git commit; not the same operation
+small,projfs,commit-100,5,wall,75.017,ms,OK,100 files appended to; 456118 bytes in them
+small,projfs,commit-100,5,internal,54.307,ms,OK,
+small,projfs,commit-100,5,bytes_read,456118,bytes,OK,
+small,projfs,commit-100,5,bytes_written,456118,bytes,OK,
+small,projfs,status-after-commit-100,5,wall,18.297,ms,OK,
+small,projfs,commit-100,5,provider_peak_working_set,25559040,bytes,OK,
+small,projfs,commit-100,5,provider_cpu,93.75,ms,OK,
+small,projfs,discard-after-commit-100,5,wall,29.33,ms,OK,
+small,projfs,discard-after-commit-100,5,internal,17.017,ms,OK,
+small,worktree,git-commit-100,5,wall,465.014,ms,OK,reference: git add -A + git commit; not the same operation
+small,projfs,commit-1000,1,wall,559.85,ms,OK,1000 files appended to; 4428999 bytes in them
+small,projfs,commit-1000,1,internal,533.942,ms,OK,
+small,projfs,commit-1000,1,bytes_read,4428999,bytes,OK,
+small,projfs,commit-1000,1,bytes_written,4428999,bytes,OK,
+small,projfs,status-after-commit-1000,1,wall,74.072,ms,OK,
+small,projfs,commit-1000,1,provider_peak_working_set,34197504,bytes,OK,
+small,projfs,commit-1000,1,provider_cpu,968.75,ms,OK,
+small,projfs,discard-after-commit-1000,1,wall,123.225,ms,OK,
+small,projfs,discard-after-commit-1000,1,internal,111.903,ms,OK,
+small,worktree,git-commit-1000,1,wall,1831.891,ms,OK,reference: git add -A + git commit; not the same operation
+small,projfs,commit-1000,2,wall,517.193,ms,OK,1000 files appended to; 4428999 bytes in them
+small,projfs,commit-1000,2,internal,494.513,ms,OK,
+small,projfs,commit-1000,2,bytes_read,4428999,bytes,OK,
+small,projfs,commit-1000,2,bytes_written,4428999,bytes,OK,
+small,projfs,status-after-commit-1000,2,wall,68.219,ms,OK,
+small,projfs,commit-1000,2,provider_peak_working_set,34344960,bytes,OK,
+small,projfs,commit-1000,2,provider_cpu,1093.75,ms,OK,
+small,projfs,discard-after-commit-1000,2,wall,127.558,ms,OK,
+small,projfs,discard-after-commit-1000,2,internal,114.016,ms,OK,
+small,worktree,git-commit-1000,2,wall,2007.832,ms,OK,reference: git add -A + git commit; not the same operation
+small,projfs,commit-1000,3,wall,525.825,ms,OK,1000 files appended to; 4428999 bytes in them
+small,projfs,commit-1000,3,internal,505.411,ms,OK,
+small,projfs,commit-1000,3,bytes_read,4428999,bytes,OK,
+small,projfs,commit-1000,3,bytes_written,4428999,bytes,OK,
+small,projfs,status-after-commit-1000,3,wall,70.473,ms,OK,
+small,projfs,commit-1000,3,provider_peak_working_set,34889728,bytes,OK,
+small,projfs,commit-1000,3,provider_cpu,968.75,ms,OK,
+small,projfs,discard-after-commit-1000,3,wall,132.988,ms,OK,
+small,projfs,discard-after-commit-1000,3,internal,117.413,ms,OK,
+small,worktree,git-commit-1000,3,wall,2296.573,ms,OK,reference: git add -A + git commit; not the same operation
+small,projfs,commit-1000,4,wall,859.82,ms,OK,1000 files appended to; 4428999 bytes in them
+small,projfs,commit-1000,4,internal,835.360,ms,OK,
+small,projfs,commit-1000,4,bytes_read,4428999,bytes,OK,
+small,projfs,commit-1000,4,bytes_written,4428999,bytes,OK,
+small,projfs,status-after-commit-1000,4,wall,138.048,ms,OK,
+small,projfs,commit-1000,4,provider_peak_working_set,34721792,bytes,OK,
+small,projfs,commit-1000,4,provider_cpu,1843.75,ms,OK,
+small,projfs,discard-after-commit-1000,4,wall,236.263,ms,OK,
+small,projfs,discard-after-commit-1000,4,internal,218.255,ms,OK,
+small,worktree,git-commit-1000,4,wall,2032.02,ms,OK,reference: git add -A + git commit; not the same operation
+small,projfs,commit-1000,5,wall,532.254,ms,OK,1000 files appended to; 4428999 bytes in them
+small,projfs,commit-1000,5,internal,511.087,ms,OK,
+small,projfs,commit-1000,5,bytes_read,4428999,bytes,OK,
+small,projfs,commit-1000,5,bytes_written,4428999,bytes,OK,
+small,projfs,status-after-commit-1000,5,wall,87.816,ms,OK,
+small,projfs,commit-1000,5,provider_peak_working_set,34807808,bytes,OK,
+small,projfs,commit-1000,5,provider_cpu,1109.375,ms,OK,
+small,projfs,discard-after-commit-1000,5,wall,321.874,ms,OK,
+small,projfs,discard-after-commit-1000,5,internal,305.224,ms,OK,
+small,worktree,git-commit-1000,5,wall,2240.98,ms,OK,reference: git add -A + git commit; not the same operation
+small,projfs,disk-1,1,free_space_delta,1404928,bytes,OK,1 Workspaces mounted and listed and git status run in each
+small,projfs,disk-1,1,wall,994.029,ms,OK,mount + listing + git status of all  one after another
+small,projfs,disk-1,1,on_disk_bytes_sum,83421,bytes,OK,content bytes of hydrated and full files in all Workspaces
+small,projfs,disk-1,1,on_disk_placeholders_sum,0,count,OK,
+small,projfs,disk-1,1,on_disk_content_files_sum,7,count,OK,
+small,projfs,disk-1,1,providers_peak_working_set_sum,22024192,bytes,OK,
+small,projfs,disk-1,2,free_space_delta,-2781184,bytes,OK,1 Workspaces mounted and listed and git status run in each
+small,projfs,disk-1,2,wall,724.63,ms,OK,mount + listing + git status of all  one after another
+small,projfs,disk-1,2,on_disk_bytes_sum,83421,bytes,OK,content bytes of hydrated and full files in all Workspaces
+small,projfs,disk-1,2,on_disk_placeholders_sum,0,count,OK,
+small,projfs,disk-1,2,on_disk_content_files_sum,7,count,OK,
+small,projfs,disk-1,2,providers_peak_working_set_sum,21766144,bytes,OK,
+small,projfs,disk-1,3,free_space_delta,884736,bytes,OK,1 Workspaces mounted and listed and git status run in each
+small,projfs,disk-1,3,wall,1025.41,ms,OK,mount + listing + git status of all  one after another
+small,projfs,disk-1,3,on_disk_bytes_sum,83421,bytes,OK,content bytes of hydrated and full files in all Workspaces
+small,projfs,disk-1,3,on_disk_placeholders_sum,0,count,OK,
+small,projfs,disk-1,3,on_disk_content_files_sum,7,count,OK,
+small,projfs,disk-1,3,providers_peak_working_set_sum,21827584,bytes,OK,
+small,projfs,disk-1,4,free_space_delta,884736,bytes,OK,1 Workspaces mounted and listed and git status run in each
+small,projfs,disk-1,4,wall,1076.544,ms,OK,mount + listing + git status of all  one after another
+small,projfs,disk-1,4,on_disk_bytes_sum,83421,bytes,OK,content bytes of hydrated and full files in all Workspaces
+small,projfs,disk-1,4,on_disk_placeholders_sum,0,count,OK,
+small,projfs,disk-1,4,on_disk_content_files_sum,7,count,OK,
+small,projfs,disk-1,4,providers_peak_working_set_sum,21909504,bytes,OK,
+small,projfs,disk-1,5,free_space_delta,884736,bytes,OK,1 Workspaces mounted and listed and git status run in each
+small,projfs,disk-1,5,wall,939.238,ms,OK,mount + listing + git status of all  one after another
+small,projfs,disk-1,5,on_disk_bytes_sum,83421,bytes,OK,content bytes of hydrated and full files in all Workspaces
+small,projfs,disk-1,5,on_disk_placeholders_sum,0,count,OK,
+small,projfs,disk-1,5,on_disk_content_files_sum,7,count,OK,
+small,projfs,disk-1,5,providers_peak_working_set_sum,22003712,bytes,OK,
+small,copy,disk-1,1,free_space_delta,36610048,bytes,OK,1 full copies
+small,copy,disk-1,1,tree_bytes_sum,5645419,bytes,OK,count times the source tree  .git included
+small,worktree,disk-1,1,free_space_delta,6815744,bytes,OK,1 worktrees
+small,worktree,disk-1,1,tree_bytes_sum,4411999,bytes,OK,count times the checked-out files  without .git
+small,copy,disk-1,2,free_space_delta,28295168,bytes,OK,1 full copies
+small,copy,disk-1,2,tree_bytes_sum,5645419,bytes,OK,count times the source tree  .git included
+small,worktree,disk-1,2,free_space_delta,6684672,bytes,OK,1 worktrees
+small,worktree,disk-1,2,tree_bytes_sum,4411999,bytes,OK,count times the checked-out files  without .git
+small,copy,disk-1,3,free_space_delta,31997952,bytes,OK,1 full copies
+small,copy,disk-1,3,tree_bytes_sum,5645419,bytes,OK,count times the source tree  .git included
+small,worktree,disk-1,3,free_space_delta,7217152,bytes,OK,1 worktrees
+small,worktree,disk-1,3,tree_bytes_sum,4411999,bytes,OK,count times the checked-out files  without .git
+small,copy,disk-1,4,free_space_delta,26292224,bytes,OK,1 full copies
+small,copy,disk-1,4,tree_bytes_sum,5645419,bytes,OK,count times the source tree  .git included
+small,worktree,disk-1,4,free_space_delta,-1179648,bytes,OK,1 worktrees
+small,worktree,disk-1,4,tree_bytes_sum,4411999,bytes,OK,count times the checked-out files  without .git
+small,copy,disk-1,5,free_space_delta,36704256,bytes,OK,1 full copies
+small,copy,disk-1,5,tree_bytes_sum,5645419,bytes,OK,count times the source tree  .git included
+small,worktree,disk-1,5,free_space_delta,6684672,bytes,OK,1 worktrees
+small,worktree,disk-1,5,tree_bytes_sum,4411999,bytes,OK,count times the checked-out files  without .git
+small,projfs,disk-4,1,free_space_delta,3354624,bytes,OK,4 Workspaces mounted and listed and git status run in each
+small,projfs,disk-4,1,wall,3704.078,ms,OK,mount + listing + git status of all  one after another
+small,projfs,disk-4,1,on_disk_bytes_sum,333684,bytes,OK,content bytes of hydrated and full files in all Workspaces
+small,projfs,disk-4,1,on_disk_placeholders_sum,0,count,OK,
+small,projfs,disk-4,1,on_disk_content_files_sum,28,count,OK,
+small,projfs,disk-4,1,providers_peak_working_set_sum,87625728,bytes,OK,
+small,projfs,disk-4,2,free_space_delta,-7155712,bytes,OK,4 Workspaces mounted and listed and git status run in each
+small,projfs,disk-4,2,wall,2728.83,ms,OK,mount + listing + git status of all  one after another
+small,projfs,disk-4,2,on_disk_bytes_sum,333684,bytes,OK,content bytes of hydrated and full files in all Workspaces
+small,projfs,disk-4,2,on_disk_placeholders_sum,0,count,OK,
+small,projfs,disk-4,2,on_disk_content_files_sum,28,count,OK,
+small,projfs,disk-4,2,providers_peak_working_set_sum,87486464,bytes,OK,
+small,projfs,disk-4,3,free_space_delta,3440640,bytes,OK,4 Workspaces mounted and listed and git status run in each
+small,projfs,disk-4,3,wall,3019.312,ms,OK,mount + listing + git status of all  one after another
+small,projfs,disk-4,3,on_disk_bytes_sum,333684,bytes,OK,content bytes of hydrated and full files in all Workspaces
+small,projfs,disk-4,3,on_disk_placeholders_sum,0,count,OK,
+small,projfs,disk-4,3,on_disk_content_files_sum,28,count,OK,
+small,projfs,disk-4,3,providers_peak_working_set_sum,87773184,bytes,OK,
+small,projfs,disk-4,4,free_space_delta,3506176,bytes,OK,4 Workspaces mounted and listed and git status run in each
+small,projfs,disk-4,4,wall,2547.448,ms,OK,mount + listing + git status of all  one after another
+small,projfs,disk-4,4,on_disk_bytes_sum,333684,bytes,OK,content bytes of hydrated and full files in all Workspaces
+small,projfs,disk-4,4,on_disk_placeholders_sum,0,count,OK,
+small,projfs,disk-4,4,on_disk_content_files_sum,28,count,OK,
+small,projfs,disk-4,4,providers_peak_working_set_sum,87547904,bytes,OK,
+small,projfs,disk-4,5,free_space_delta,3440640,bytes,OK,4 Workspaces mounted and listed and git status run in each
+small,projfs,disk-4,5,wall,3064.069,ms,OK,mount + listing + git status of all  one after another
+small,projfs,disk-4,5,on_disk_bytes_sum,333684,bytes,OK,content bytes of hydrated and full files in all Workspaces
+small,projfs,disk-4,5,on_disk_placeholders_sum,0,count,OK,
+small,projfs,disk-4,5,on_disk_content_files_sum,28,count,OK,
+small,projfs,disk-4,5,providers_peak_working_set_sum,87617536,bytes,OK,
+small,copy,disk-4,1,free_space_delta,119238656,bytes,OK,4 full copies
+small,copy,disk-4,1,tree_bytes_sum,22581676,bytes,OK,count times the source tree  .git included
+small,worktree,disk-4,1,free_space_delta,27791360,bytes,OK,4 worktrees
+small,worktree,disk-4,1,tree_bytes_sum,17647996,bytes,OK,count times the checked-out files  without .git
+small,copy,disk-4,2,free_space_delta,133443584,bytes,OK,4 full copies
+small,copy,disk-4,2,tree_bytes_sum,22581676,bytes,OK,count times the source tree  .git included
+small,worktree,disk-4,2,free_space_delta,27791360,bytes,OK,4 worktrees
+small,worktree,disk-4,2,tree_bytes_sum,17647996,bytes,OK,count times the checked-out files  without .git
+small,copy,disk-4,3,free_space_delta,117350400,bytes,OK,4 full copies
+small,copy,disk-4,3,tree_bytes_sum,22581676,bytes,OK,count times the source tree  .git included
+small,worktree,disk-4,3,free_space_delta,27865088,bytes,OK,4 worktrees
+small,worktree,disk-4,3,tree_bytes_sum,17647996,bytes,OK,count times the checked-out files  without .git
+small,copy,disk-4,4,free_space_delta,113704960,bytes,OK,4 full copies
+small,copy,disk-4,4,tree_bytes_sum,22581676,bytes,OK,count times the source tree  .git included
+small,worktree,disk-4,4,free_space_delta,27860992,bytes,OK,4 worktrees
+small,worktree,disk-4,4,tree_bytes_sum,17647996,bytes,OK,count times the checked-out files  without .git
+small,copy,disk-4,5,free_space_delta,119910400,bytes,OK,4 full copies
+small,copy,disk-4,5,tree_bytes_sum,22581676,bytes,OK,count times the source tree  .git included
+small,worktree,disk-4,5,free_space_delta,27840512,bytes,OK,4 worktrees
+small,worktree,disk-4,5,tree_bytes_sum,17647996,bytes,OK,count times the checked-out files  without .git
+small,projfs,disk-16,1,free_space_delta,10002432,bytes,OK,16 Workspaces mounted and listed and git status run in each
+small,projfs,disk-16,1,wall,9671.868,ms,OK,mount + listing + git status of all  one after another
+small,projfs,disk-16,1,on_disk_bytes_sum,1334736,bytes,OK,content bytes of hydrated and full files in all Workspaces
+small,projfs,disk-16,1,on_disk_placeholders_sum,0,count,OK,
+small,projfs,disk-16,1,on_disk_content_files_sum,112,count,OK,
+small,projfs,disk-16,1,providers_peak_working_set_sum,350076928,bytes,OK,
+small,projfs,disk-16,2,free_space_delta,14585856,bytes,OK,16 Workspaces mounted and listed and git status run in each
+small,projfs,disk-16,2,wall,9742.981,ms,OK,mount + listing + git status of all  one after another
+small,projfs,disk-16,2,on_disk_bytes_sum,1334736,bytes,OK,content bytes of hydrated and full files in all Workspaces
+small,projfs,disk-16,2,on_disk_placeholders_sum,0,count,OK,
+small,projfs,disk-16,2,on_disk_content_files_sum,112,count,OK,
+small,projfs,disk-16,2,providers_peak_working_set_sum,350089216,bytes,OK,
+small,projfs,disk-16,3,free_space_delta,14721024,bytes,OK,16 Workspaces mounted and listed and git status run in each
+small,projfs,disk-16,3,wall,9692.804,ms,OK,mount + listing + git status of all  one after another
+small,projfs,disk-16,3,on_disk_bytes_sum,1334736,bytes,OK,content bytes of hydrated and full files in all Workspaces
+small,projfs,disk-16,3,on_disk_placeholders_sum,0,count,OK,
+small,projfs,disk-16,3,on_disk_content_files_sum,112,count,OK,
+small,projfs,disk-16,3,providers_peak_working_set_sum,350769152,bytes,OK,
+small,projfs,disk-16,4,free_space_delta,7618560,bytes,OK,16 Workspaces mounted and listed and git status run in each
+small,projfs,disk-16,4,wall,11535.768,ms,OK,mount + listing + git status of all  one after another
+small,projfs,disk-16,4,on_disk_bytes_sum,1334736,bytes,OK,content bytes of hydrated and full files in all Workspaces
+small,projfs,disk-16,4,on_disk_placeholders_sum,0,count,OK,
+small,projfs,disk-16,4,on_disk_content_files_sum,112,count,OK,
+small,projfs,disk-16,4,providers_peak_working_set_sum,350482432,bytes,OK,
+small,projfs,disk-16,5,free_space_delta,14585856,bytes,OK,16 Workspaces mounted and listed and git status run in each
+small,projfs,disk-16,5,wall,10409.655,ms,OK,mount + listing + git status of all  one after another
+small,projfs,disk-16,5,on_disk_bytes_sum,1334736,bytes,OK,content bytes of hydrated and full files in all Workspaces
+small,projfs,disk-16,5,on_disk_placeholders_sum,0,count,OK,
+small,projfs,disk-16,5,on_disk_content_files_sum,112,count,OK,
+small,projfs,disk-16,5,providers_peak_working_set_sum,350330880,bytes,OK,
+small,copy,disk-16,1,free_space_delta,477896704,bytes,OK,16 full copies
+small,copy,disk-16,1,tree_bytes_sum,90326704,bytes,OK,count times the source tree  .git included
+small,worktree,disk-16,1,free_space_delta,105345024,bytes,OK,16 worktrees
+small,worktree,disk-16,1,tree_bytes_sum,70591984,bytes,OK,count times the checked-out files  without .git
+small,copy,disk-16,2,free_space_delta,485867520,bytes,OK,16 full copies
+small,copy,disk-16,2,tree_bytes_sum,90326704,bytes,OK,count times the source tree  .git included
+small,worktree,disk-16,2,free_space_delta,87003136,bytes,OK,16 worktrees
+small,worktree,disk-16,2,tree_bytes_sum,70591984,bytes,OK,count times the checked-out files  without .git
+small,copy,disk-16,3,free_space_delta,428167168,bytes,OK,16 full copies
+small,copy,disk-16,3,tree_bytes_sum,90326704,bytes,OK,count times the source tree  .git included
+small,worktree,disk-16,3,free_space_delta,99786752,bytes,OK,16 worktrees
+small,worktree,disk-16,3,tree_bytes_sum,70591984,bytes,OK,count times the checked-out files  without .git
+small,copy,disk-16,4,free_space_delta,479670272,bytes,OK,16 full copies
+small,copy,disk-16,4,tree_bytes_sum,90326704,bytes,OK,count times the source tree  .git included
+small,worktree,disk-16,4,free_space_delta,101711872,bytes,OK,16 worktrees
+small,worktree,disk-16,4,tree_bytes_sum,70591984,bytes,OK,count times the checked-out files  without .git
+small,copy,disk-16,5,free_space_delta,474578944,bytes,OK,16 full copies
+small,copy,disk-16,5,tree_bytes_sum,90326704,bytes,OK,count times the source tree  .git included
+small,worktree,disk-16,5,free_space_delta,106450944,bytes,OK,16 worktrees
+small,worktree,disk-16,5,tree_bytes_sum,70591984,bytes,OK,count times the checked-out files  without .git
+medium,projfs,store-init,1,wall,78198.297,ms,OK,setup: Project Init of the source tree with .git; 55123 entries
+medium,projfs,store-init,1,internal,78173.660,ms,OK,
+medium,projfs,store-init,1,store_file,93261824,bytes,OK,
+medium,projfs,mount-cold,1,wall,78.117,ms,OK,process start to ready; Store file cache purged by an unbuffered open (best effort)
+medium,projfs,mount-cold,1,internal,42.170,ms,OK,Store open + bind + ProjFS start
+medium,projfs,mount-cold,1,store_open,11.835,ms,OK,
+medium,projfs,list-first,1,wall,13908.326,ms,OK,fresh mount
+medium,projfs,disk-after-listing,1,free_space_delta,3702784,bytes,OK,volume free space before minus after; includes whatever else the system wrote
+medium,projfs,disk-after-listing,1,on_disk_bytes,0,bytes,OK,content bytes of hydrated and full files
+medium,projfs,disk-after-listing,1,on_disk_placeholders,0,count,OK,
+medium,projfs,disk-after-listing,1,on_disk_hydrated,0,count,OK,
+medium,projfs,disk-after-listing,1,on_disk_full,0,count,OK,
+medium,projfs,disk-after-listing,1,on_disk_directories,3790,count,OK,
+medium,projfs,list-second,1,wall,1621.115,ms,OK,
+medium,projfs,git-status-first,1,wall,768.695,ms,OK,first git status on the fresh mount
+medium,projfs,disk-after-git-status,1,free_space_delta,52609024,bytes,OK,
+medium,projfs,disk-after-git-status,1,on_disk_bytes,46117801,bytes,OK,content bytes of hydrated and full files
+medium,projfs,disk-after-git-status,1,on_disk_placeholders,0,count,OK,
+medium,projfs,disk-after-git-status,1,on_disk_hydrated,42,count,OK,
+medium,projfs,disk-after-git-status,1,on_disk_full,1,count,OK,
+medium,projfs,disk-after-git-status,1,on_disk_directories,3790,count,OK,
+medium,projfs,git-status-second,1,wall,404.767,ms,OK,
+medium,projfs,rg-first,1,wall,28825.795,ms,OK,first search on the mount; every file it reads is hydrated
+medium,projfs,disk-after-rg,1,free_space_delta,3481419776,bytes,OK,
+medium,projfs,disk-after-rg,1,on_disk_bytes,197719000,bytes,OK,content bytes of hydrated and full files
+medium,projfs,disk-after-rg,1,on_disk_placeholders,0,count,OK,
+medium,projfs,disk-after-rg,1,on_disk_hydrated,51196,count,OK,
+medium,projfs,disk-after-rg,1,on_disk_full,1,count,OK,
+medium,projfs,disk-after-rg,1,on_disk_directories,3790,count,OK,
+medium,projfs,rg-second,1,wall,2477.888,ms,OK,
+medium,projfs,session,1,placeholders_served,92610,count,OK,
+medium,projfs,session,1,read_bytes_served,197719000,bytes,OK,
+medium,projfs,session,1,provider_peak_working_set,55390208,bytes,OK,
+medium,projfs,session,1,provider_cpu,55734.375,ms,OK,
+medium,projfs,discard-hydrated,1,wall,14440.213,ms,OK,
+medium,projfs,discard-hydrated,1,internal,14424.803,ms,OK,
+medium,projfs,mount-warm,1,wall,66.648,ms,OK,process start to ready; right after a session on the same Store
+medium,projfs,mount-warm,1,internal,32.198,ms,OK,
+medium,projfs,mount-warm,1,provider_peak_working_set,19120128,bytes,OK,
+medium,projfs,mount-warm,1,provider_cpu,109.375,ms,OK,
+medium,projfs,discard-fresh,1,wall,31.029,ms,OK,
+medium,projfs,discard-fresh,1,internal,6.842,ms,OK,
+medium,copy,create,1,wall,53352.369,ms,OK,robocopy /E of the source tree with .git
+medium,copy,disk-after-create,1,free_space_delta,281767936,bytes,OK,
+medium,copy,disk-after-create,1,tree_bytes,198777958,bytes,OK,sum of file lengths
+medium,copy,disk-after-create,1,tree_files,51332,count,OK,
+medium,copy,list-first,1,wall,996.212,ms,OK,fresh copy
+medium,copy,list-second,1,wall,837.179,ms,OK,
+medium,copy,git-status-first,1,wall,102.765,ms,OK,fresh copy
+medium,copy,git-status-second,1,wall,91.077,ms,OK,
+medium,copy,rg-first,1,wall,11692.362,ms,OK,fresh copy
+medium,copy,rg-second,1,wall,1937.233,ms,OK,
+medium,copy,remove,1,wall,14145.143,ms,OK,
+medium,worktree,create,1,wall,28082.899,ms,OK,git worktree add --detach
+medium,worktree,disk-after-create,1,free_space_delta,234459136,bytes,OK,
+medium,worktree,disk-after-create,1,tree_bytes,152431612,bytes,OK,sum of file lengths
+medium,worktree,disk-after-create,1,tree_files,51308,count,OK,
+medium,worktree,list-first,1,wall,876.518,ms,OK,fresh worktree
+medium,worktree,list-second,1,wall,708.516,ms,OK,
+medium,worktree,git-status-first,1,wall,185.405,ms,OK,fresh worktree
+medium,worktree,git-status-second,1,wall,97.746,ms,OK,
+medium,worktree,rg-first,1,wall,11247.769,ms,OK,fresh worktree
+medium,worktree,rg-second,1,wall,1952.474,ms,OK,
+medium,worktree,remove,1,wall,7020.823,ms,OK,
+medium,ntfs,list-first,1,wall,672.455,ms,OK,the source tree itself; file cache as the previous steps left it
+medium,ntfs,list-second,1,wall,550.606,ms,OK,
+medium,ntfs,git-status-first,1,wall,98.845,ms,OK,the source tree itself; file cache as the previous steps left it
+medium,ntfs,git-status-second,1,wall,97.648,ms,OK,
+medium,ntfs,rg-first,1,wall,1505.665,ms,OK,the source tree itself; file cache as the previous steps left it
+medium,ntfs,rg-second,1,wall,1590.272,ms,OK,
+medium,projfs,mount-cold,2,wall,57.155,ms,OK,process start to ready; Store file cache purged by an unbuffered open (best effort)
+medium,projfs,mount-cold,2,internal,32.738,ms,OK,Store open + bind + ProjFS start
+medium,projfs,mount-cold,2,store_open,6.665,ms,OK,
+medium,projfs,list-first,2,wall,12375.071,ms,OK,fresh mount
+medium,projfs,disk-after-listing,2,free_space_delta,3768320,bytes,OK,volume free space before minus after; includes whatever else the system wrote
+medium,projfs,disk-after-listing,2,on_disk_bytes,0,bytes,OK,content bytes of hydrated and full files
+medium,projfs,disk-after-listing,2,on_disk_placeholders,0,count,OK,
+medium,projfs,disk-after-listing,2,on_disk_hydrated,0,count,OK,
+medium,projfs,disk-after-listing,2,on_disk_full,0,count,OK,
+medium,projfs,disk-after-listing,2,on_disk_directories,3790,count,OK,
+medium,projfs,list-second,2,wall,1781.055,ms,OK,
+medium,projfs,git-status-first,2,wall,853.604,ms,OK,first git status on the fresh mount
+medium,projfs,disk-after-git-status,2,free_space_delta,53252096,bytes,OK,
+medium,projfs,disk-after-git-status,2,on_disk_bytes,46117801,bytes,OK,content bytes of hydrated and full files
+medium,projfs,disk-after-git-status,2,on_disk_placeholders,0,count,OK,
+medium,projfs,disk-after-git-status,2,on_disk_hydrated,42,count,OK,
+medium,projfs,disk-after-git-status,2,on_disk_full,1,count,OK,
+medium,projfs,disk-after-git-status,2,on_disk_directories,3790,count,OK,
+medium,projfs,git-status-second,2,wall,361.583,ms,OK,
+medium,projfs,rg-first,2,wall,18546.182,ms,OK,first search on the mount; every file it reads is hydrated
+medium,projfs,disk-after-rg,2,free_space_delta,3495264256,bytes,OK,
+medium,projfs,disk-after-rg,2,on_disk_bytes,197719000,bytes,OK,content bytes of hydrated and full files
+medium,projfs,disk-after-rg,2,on_disk_placeholders,0,count,OK,
+medium,projfs,disk-after-rg,2,on_disk_hydrated,51196,count,OK,
+medium,projfs,disk-after-rg,2,on_disk_full,1,count,OK,
+medium,projfs,disk-after-rg,2,on_disk_directories,3790,count,OK,
+medium,projfs,rg-second,2,wall,2579.037,ms,OK,
+medium,projfs,session,2,placeholders_served,92610,count,OK,
+medium,projfs,session,2,read_bytes_served,197719000,bytes,OK,
+medium,projfs,session,2,provider_peak_working_set,54726656,bytes,OK,
+medium,projfs,session,2,provider_cpu,45078.125,ms,OK,
+medium,projfs,discard-hydrated,2,wall,9523.778,ms,OK,
+medium,projfs,discard-hydrated,2,internal,9508.243,ms,OK,
+medium,projfs,mount-warm,2,wall,69.92,ms,OK,process start to ready; right after a session on the same Store
+medium,projfs,mount-warm,2,internal,34.428,ms,OK,
+medium,projfs,mount-warm,2,provider_peak_working_set,19382272,bytes,OK,
+medium,projfs,mount-warm,2,provider_cpu,31.25,ms,OK,
+medium,projfs,discard-fresh,2,wall,31.764,ms,OK,
+medium,projfs,discard-fresh,2,internal,6.329,ms,OK,
+medium,copy,create,2,wall,32757.23,ms,OK,robocopy /E of the source tree with .git
+medium,copy,disk-after-create,2,free_space_delta,275701760,bytes,OK,
+medium,copy,disk-after-create,2,tree_bytes,198777958,bytes,OK,sum of file lengths
+medium,copy,disk-after-create,2,tree_files,51332,count,OK,
+medium,copy,list-first,2,wall,722.328,ms,OK,fresh copy
+medium,copy,list-second,2,wall,627.519,ms,OK,
+medium,copy,git-status-first,2,wall,102.303,ms,OK,fresh copy
+medium,copy,git-status-second,2,wall,95.887,ms,OK,
+medium,copy,rg-first,2,wall,11236.301,ms,OK,fresh copy
+medium,copy,rg-second,2,wall,1968.811,ms,OK,
+medium,copy,remove,2,wall,9154.241,ms,OK,
+medium,worktree,create,2,wall,18257.648,ms,OK,git worktree add --detach
+medium,worktree,disk-after-create,2,free_space_delta,236314624,bytes,OK,
+medium,worktree,disk-after-create,2,tree_bytes,152431612,bytes,OK,sum of file lengths
+medium,worktree,disk-after-create,2,tree_files,51308,count,OK,
+medium,worktree,list-first,2,wall,641.466,ms,OK,fresh worktree
+medium,worktree,list-second,2,wall,624.378,ms,OK,
+medium,worktree,git-status-first,2,wall,169.741,ms,OK,fresh worktree
+medium,worktree,git-status-second,2,wall,112.296,ms,OK,
+medium,worktree,rg-first,2,wall,20437.265,ms,OK,fresh worktree
+medium,worktree,rg-second,2,wall,1963.06,ms,OK,
+medium,worktree,remove,2,wall,9088.953,ms,OK,
+medium,ntfs,list-first,2,wall,790.655,ms,OK,the source tree itself; file cache as the previous steps left it
+medium,ntfs,list-second,2,wall,590.817,ms,OK,
+medium,ntfs,git-status-first,2,wall,112.152,ms,OK,the source tree itself; file cache as the previous steps left it
+medium,ntfs,git-status-second,2,wall,104.076,ms,OK,
+medium,ntfs,rg-first,2,wall,1721.818,ms,OK,the source tree itself; file cache as the previous steps left it
+medium,ntfs,rg-second,2,wall,1694.57,ms,OK,
+medium,projfs,mount-cold,3,wall,58.404,ms,OK,process start to ready; Store file cache purged by an unbuffered open (best effort)
+medium,projfs,mount-cold,3,internal,31.952,ms,OK,Store open + bind + ProjFS start
+medium,projfs,mount-cold,3,store_open,6.334,ms,OK,
+medium,projfs,list-first,3,wall,12387.24,ms,OK,fresh mount
+medium,projfs,disk-after-listing,3,free_space_delta,3592192,bytes,OK,volume free space before minus after; includes whatever else the system wrote
+medium,projfs,disk-after-listing,3,on_disk_bytes,0,bytes,OK,content bytes of hydrated and full files
+medium,projfs,disk-after-listing,3,on_disk_placeholders,0,count,OK,
+medium,projfs,disk-after-listing,3,on_disk_hydrated,0,count,OK,
+medium,projfs,disk-after-listing,3,on_disk_full,0,count,OK,
+medium,projfs,disk-after-listing,3,on_disk_directories,3790,count,OK,
+medium,projfs,list-second,3,wall,2076.598,ms,OK,
+medium,projfs,git-status-first,3,wall,888.852,ms,OK,first git status on the fresh mount
+medium,projfs,disk-after-git-status,3,free_space_delta,52772864,bytes,OK,
+medium,projfs,disk-after-git-status,3,on_disk_bytes,46117801,bytes,OK,content bytes of hydrated and full files
+medium,projfs,disk-after-git-status,3,on_disk_placeholders,0,count,OK,
+medium,projfs,disk-after-git-status,3,on_disk_hydrated,42,count,OK,
+medium,projfs,disk-after-git-status,3,on_disk_full,1,count,OK,
+medium,projfs,disk-after-git-status,3,on_disk_directories,3790,count,OK,
+medium,projfs,git-status-second,3,wall,441.782,ms,OK,
+medium,projfs,rg-first,3,wall,21328.046,ms,OK,first search on the mount; every file it reads is hydrated
+medium,projfs,disk-after-rg,3,free_space_delta,3482214400,bytes,OK,
+medium,projfs,disk-after-rg,3,on_disk_bytes,197719000,bytes,OK,content bytes of hydrated and full files
+medium,projfs,disk-after-rg,3,on_disk_placeholders,0,count,OK,
+medium,projfs,disk-after-rg,3,on_disk_hydrated,51196,count,OK,
+medium,projfs,disk-after-rg,3,on_disk_full,1,count,OK,
+medium,projfs,disk-after-rg,3,on_disk_directories,3790,count,OK,
+medium,projfs,rg-second,3,wall,2533.089,ms,OK,
+medium,projfs,session,3,placeholders_served,92610,count,OK,
+medium,projfs,session,3,read_bytes_served,197719000,bytes,OK,
+medium,projfs,session,3,provider_peak_working_set,54235136,bytes,OK,
+medium,projfs,session,3,provider_cpu,52109.375,ms,OK,
+medium,projfs,discard-hydrated,3,wall,12631.306,ms,OK,
+medium,projfs,discard-hydrated,3,internal,12617.977,ms,OK,
+medium,projfs,mount-warm,3,wall,39.641,ms,OK,process start to ready; right after a session on the same Store
+medium,projfs,mount-warm,3,internal,19.013,ms,OK,
+medium,projfs,mount-warm,3,provider_peak_working_set,19193856,bytes,OK,
+medium,projfs,mount-warm,3,provider_cpu,15.625,ms,OK,
+medium,projfs,discard-fresh,3,wall,26.741,ms,OK,
+medium,projfs,discard-fresh,3,internal,4.857,ms,OK,
+medium,copy,create,3,wall,43404.396,ms,OK,robocopy /E of the source tree with .git
+medium,copy,disk-after-create,3,free_space_delta,-121444745216,bytes,OK,
+medium,copy,disk-after-create,3,tree_bytes,198777958,bytes,OK,sum of file lengths
+medium,copy,disk-after-create,3,tree_files,51332,count,OK,
+medium,copy,list-first,3,wall,610.625,ms,OK,fresh copy
+medium,copy,list-second,3,wall,580.105,ms,OK,
+medium,copy,git-status-first,3,wall,101.627,ms,OK,fresh copy
+medium,copy,git-status-second,3,wall,98.263,ms,OK,
+medium,copy,rg-first,3,wall,9933.336,ms,OK,fresh copy
+medium,copy,rg-second,3,wall,1981.483,ms,OK,
+medium,copy,remove,3,wall,14334.866,ms,OK,
+medium,worktree,create,3,wall,21862.689,ms,OK,git worktree add --detach
+medium,worktree,disk-after-create,3,free_space_delta,237924352,bytes,OK,
+medium,worktree,disk-after-create,3,tree_bytes,152431612,bytes,OK,sum of file lengths
+medium,worktree,disk-after-create,3,tree_files,51308,count,OK,
+medium,worktree,list-first,3,wall,856.335,ms,OK,fresh worktree
+medium,worktree,list-second,3,wall,618.721,ms,OK,
+medium,worktree,git-status-first,3,wall,209.022,ms,OK,fresh worktree
+medium,worktree,git-status-second,3,wall,95.2,ms,OK,
+medium,worktree,rg-first,3,wall,11708.254,ms,OK,fresh worktree
+medium,worktree,rg-second,3,wall,1961.762,ms,OK,
+medium,worktree,remove,3,wall,13838.452,ms,OK,
+medium,ntfs,list-first,3,wall,741.425,ms,OK,the source tree itself; file cache as the previous steps left it
+medium,ntfs,list-second,3,wall,578.935,ms,OK,
+medium,ntfs,git-status-first,3,wall,102.779,ms,OK,the source tree itself; file cache as the previous steps left it
+medium,ntfs,git-status-second,3,wall,105.55,ms,OK,
+medium,ntfs,rg-first,3,wall,1668.276,ms,OK,the source tree itself; file cache as the previous steps left it
+medium,ntfs,rg-second,3,wall,1665.725,ms,OK,
+medium,projfs,mount-cold,4,wall,54.073,ms,OK,process start to ready; Store file cache purged by an unbuffered open (best effort)
+medium,projfs,mount-cold,4,internal,29.676,ms,OK,Store open + bind + ProjFS start
+medium,projfs,mount-cold,4,store_open,7.732,ms,OK,
+medium,projfs,list-first,4,wall,14893.27,ms,OK,fresh mount
+medium,projfs,disk-after-listing,4,free_space_delta,-2846720,bytes,OK,volume free space before minus after; includes whatever else the system wrote
+medium,projfs,disk-after-listing,4,on_disk_bytes,0,bytes,OK,content bytes of hydrated and full files
+medium,projfs,disk-after-listing,4,on_disk_placeholders,0,count,OK,
+medium,projfs,disk-after-listing,4,on_disk_hydrated,0,count,OK,
+medium,projfs,disk-after-listing,4,on_disk_full,0,count,OK,
+medium,projfs,disk-after-listing,4,on_disk_directories,3790,count,OK,
+medium,projfs,list-second,4,wall,2445.871,ms,OK,
+medium,projfs,git-status-first,4,wall,911.497,ms,OK,first git status on the fresh mount
+medium,projfs,disk-after-git-status,4,free_space_delta,44421120,bytes,OK,
+medium,projfs,disk-after-git-status,4,on_disk_bytes,46117801,bytes,OK,content bytes of hydrated and full files
+medium,projfs,disk-after-git-status,4,on_disk_placeholders,0,count,OK,
+medium,projfs,disk-after-git-status,4,on_disk_hydrated,42,count,OK,
+medium,projfs,disk-after-git-status,4,on_disk_full,1,count,OK,
+medium,projfs,disk-after-git-status,4,on_disk_directories,3790,count,OK,
+medium,projfs,git-status-second,4,wall,493.689,ms,OK,
+medium,projfs,rg-first,4,wall,27075.054,ms,OK,first search on the mount; every file it reads is hydrated
+medium,projfs,disk-after-rg,4,free_space_delta,3382267904,bytes,OK,
+medium,projfs,disk-after-rg,4,on_disk_bytes,197719000,bytes,OK,content bytes of hydrated and full files
+medium,projfs,disk-after-rg,4,on_disk_placeholders,0,count,OK,
+medium,projfs,disk-after-rg,4,on_disk_hydrated,51196,count,OK,
+medium,projfs,disk-after-rg,4,on_disk_full,1,count,OK,
+medium,projfs,disk-after-rg,4,on_disk_directories,3790,count,OK,
+medium,projfs,rg-second,4,wall,2414.72,ms,OK,
+medium,projfs,session,4,placeholders_served,92610,count,OK,
+medium,projfs,session,4,read_bytes_served,197719000,bytes,OK,
+medium,projfs,session,4,provider_peak_working_set,55050240,bytes,OK,
+medium,projfs,session,4,provider_cpu,61500,ms,OK,
+medium,projfs,discard-hydrated,4,wall,18657.747,ms,OK,
+medium,projfs,discard-hydrated,4,internal,18641.469,ms,OK,
+medium,projfs,mount-warm,4,wall,63.312,ms,OK,process start to ready; right after a session on the same Store
+medium,projfs,mount-warm,4,internal,35.286,ms,OK,
+medium,projfs,mount-warm,4,provider_peak_working_set,19095552,bytes,OK,
+medium,projfs,mount-warm,4,provider_cpu,31.25,ms,OK,
+medium,projfs,discard-fresh,4,wall,35.09,ms,OK,
+medium,projfs,discard-fresh,4,internal,9.808,ms,OK,
+medium,copy,create,4,wall,59688.864,ms,OK,robocopy /E of the source tree with .git
+medium,copy,disk-after-create,4,free_space_delta,91910144,bytes,OK,
+medium,copy,disk-after-create,4,tree_bytes,198777958,bytes,OK,sum of file lengths
+medium,copy,disk-after-create,4,tree_files,51332,count,OK,
+medium,copy,list-first,4,wall,717.01,ms,OK,fresh copy
+medium,copy,list-second,4,wall,555.672,ms,OK,
+medium,copy,git-status-first,4,wall,99.702,ms,OK,fresh copy
+medium,copy,git-status-second,4,wall,206.726,ms,OK,
+medium,copy,rg-first,4,wall,13802.626,ms,OK,fresh copy
+medium,copy,rg-second,4,wall,1950.401,ms,OK,
+medium,copy,remove,4,wall,23688.727,ms,OK,
+medium,worktree,create,4,wall,38657.577,ms,OK,git worktree add --detach
+medium,worktree,disk-after-create,4,free_space_delta,67284992,bytes,OK,
+medium,worktree,disk-after-create,4,tree_bytes,152431612,bytes,OK,sum of file lengths
+medium,worktree,disk-after-create,4,tree_files,51308,count,OK,
+medium,worktree,list-first,4,wall,890.326,ms,OK,fresh worktree
+medium,worktree,list-second,4,wall,735.275,ms,OK,
+medium,worktree,git-status-first,4,wall,358.559,ms,OK,fresh worktree
+medium,worktree,git-status-second,4,wall,154.93,ms,OK,
+medium,worktree,rg-first,4,wall,14094.47,ms,OK,fresh worktree
+medium,worktree,rg-second,4,wall,1941.301,ms,OK,
+medium,worktree,remove,4,wall,13765.033,ms,OK,
+medium,ntfs,list-first,4,wall,768.079,ms,OK,the source tree itself; file cache as the previous steps left it
+medium,ntfs,list-second,4,wall,559.984,ms,OK,
+medium,ntfs,git-status-first,4,wall,265.084,ms,OK,the source tree itself; file cache as the previous steps left it
+medium,ntfs,git-status-second,4,wall,151.197,ms,OK,
+medium,ntfs,rg-first,4,wall,1480.561,ms,OK,the source tree itself; file cache as the previous steps left it
+medium,ntfs,rg-second,4,wall,1455.393,ms,OK,
+medium,projfs,mount-cold,5,wall,55.332,ms,OK,process start to ready; Store file cache purged by an unbuffered open (best effort)
+medium,projfs,mount-cold,5,internal,33.183,ms,OK,Store open + bind + ProjFS start
+medium,projfs,mount-cold,5,store_open,7.390,ms,OK,
+medium,projfs,list-first,5,wall,15415.149,ms,OK,fresh mount
+medium,projfs,disk-after-listing,5,free_space_delta,-73633792,bytes,OK,volume free space before minus after; includes whatever else the system wrote
+medium,projfs,disk-after-listing,5,on_disk_bytes,0,bytes,OK,content bytes of hydrated and full files
+medium,projfs,disk-after-listing,5,on_disk_placeholders,0,count,OK,
+medium,projfs,disk-after-listing,5,on_disk_hydrated,0,count,OK,
+medium,projfs,disk-after-listing,5,on_disk_full,0,count,OK,
+medium,projfs,disk-after-listing,5,on_disk_directories,3790,count,OK,
+medium,projfs,list-second,5,wall,2794.985,ms,OK,
+medium,projfs,git-status-first,5,wall,1044.042,ms,OK,first git status on the fresh mount
+medium,projfs,disk-after-git-status,5,free_space_delta,-33632256,bytes,OK,
+medium,projfs,disk-after-git-status,5,on_disk_bytes,46117801,bytes,OK,content bytes of hydrated and full files
+medium,projfs,disk-after-git-status,5,on_disk_placeholders,0,count,OK,
+medium,projfs,disk-after-git-status,5,on_disk_hydrated,42,count,OK,
+medium,projfs,disk-after-git-status,5,on_disk_full,1,count,OK,
+medium,projfs,disk-after-git-status,5,on_disk_directories,3790,count,OK,
+medium,projfs,git-status-second,5,wall,575.218,ms,OK,
+medium,projfs,rg-first,5,wall,32861.839,ms,OK,first search on the mount; every file it reads is hydrated
+medium,projfs,disk-after-rg,5,free_space_delta,3296374784,bytes,OK,
+medium,projfs,disk-after-rg,5,on_disk_bytes,197719000,bytes,OK,content bytes of hydrated and full files
+medium,projfs,disk-after-rg,5,on_disk_placeholders,0,count,OK,
+medium,projfs,disk-after-rg,5,on_disk_hydrated,51196,count,OK,
+medium,projfs,disk-after-rg,5,on_disk_full,1,count,OK,
+medium,projfs,disk-after-rg,5,on_disk_directories,3790,count,OK,
+medium,projfs,rg-second,5,wall,2526.935,ms,OK,
+medium,projfs,session,5,placeholders_served,92610,count,OK,
+medium,projfs,session,5,read_bytes_served,197719000,bytes,OK,
+medium,projfs,session,5,provider_peak_working_set,55373824,bytes,OK,
+medium,projfs,session,5,provider_cpu,59687.5,ms,OK,
+medium,projfs,discard-hydrated,5,wall,20776.361,ms,OK,
+medium,projfs,discard-hydrated,5,internal,20764.284,ms,OK,
+medium,projfs,mount-warm,5,wall,61.897,ms,OK,process start to ready; right after a session on the same Store
+medium,projfs,mount-warm,5,internal,34.505,ms,OK,
+medium,projfs,mount-warm,5,provider_peak_working_set,19144704,bytes,OK,
+medium,projfs,mount-warm,5,provider_cpu,46.875,ms,OK,
+medium,projfs,discard-fresh,5,wall,115.688,ms,OK,
+medium,projfs,discard-fresh,5,internal,91.500,ms,OK,
+medium,copy,create,5,wall,63759.673,ms,OK,robocopy /E of the source tree with .git
+medium,copy,disk-after-create,5,free_space_delta,91410432,bytes,OK,
+medium,copy,disk-after-create,5,tree_bytes,198777958,bytes,OK,sum of file lengths
+medium,copy,disk-after-create,5,tree_files,51332,count,OK,
+medium,copy,list-first,5,wall,726.25,ms,OK,fresh copy
+medium,copy,list-second,5,wall,553.009,ms,OK,
+medium,copy,git-status-first,5,wall,100.335,ms,OK,fresh copy
+medium,copy,git-status-second,5,wall,99.07,ms,OK,
+medium,copy,rg-first,5,wall,15693.865,ms,OK,fresh copy
+medium,copy,rg-second,5,wall,1980.317,ms,OK,
+medium,copy,remove,5,wall,15035.324,ms,OK,
+medium,worktree,create,5,wall,27621.54,ms,OK,git worktree add --detach
+medium,worktree,disk-after-create,5,free_space_delta,-3740405760,bytes,OK,
+medium,worktree,disk-after-create,5,tree_bytes,152431612,bytes,OK,sum of file lengths
+medium,worktree,disk-after-create,5,tree_files,51308,count,OK,
+medium,worktree,list-first,5,wall,696.682,ms,OK,fresh worktree
+medium,worktree,list-second,5,wall,552.237,ms,OK,
+medium,worktree,git-status-first,5,wall,325.873,ms,OK,fresh worktree
+medium,worktree,git-status-second,5,wall,118.439,ms,OK,
+medium,worktree,rg-first,5,wall,10543.655,ms,OK,fresh worktree
+medium,worktree,rg-second,5,wall,1873.772,ms,OK,
+medium,worktree,remove,5,wall,9690.559,ms,OK,
+medium,ntfs,list-first,5,wall,830.807,ms,OK,the source tree itself; file cache as the previous steps left it
+medium,ntfs,list-second,5,wall,926.813,ms,OK,
+medium,ntfs,git-status-first,5,wall,115.442,ms,OK,the source tree itself; file cache as the previous steps left it
+medium,ntfs,git-status-second,5,wall,91.878,ms,OK,
+medium,ntfs,rg-first,5,wall,1520.182,ms,OK,the source tree itself; file cache as the previous steps left it
+medium,ntfs,rg-second,5,wall,1554.936,ms,OK,
+medium,projfs,commit-1,1,wall,25.396,ms,OK,1 files appended to; 37 bytes in them
+medium,projfs,commit-1,1,internal,10.290,ms,OK,
+medium,projfs,commit-1,1,bytes_read,37,bytes,OK,
+medium,projfs,commit-1,1,bytes_written,37,bytes,OK,
+medium,projfs,status-after-commit-1,1,wall,18.954,ms,OK,
+medium,projfs,commit-1,1,provider_peak_working_set,24915968,bytes,OK,
+medium,projfs,commit-1,1,provider_cpu,31.25,ms,OK,
+medium,projfs,discard-after-commit-1,1,wall,27.16,ms,OK,
+medium,projfs,discard-after-commit-1,1,internal,8.072,ms,OK,
+medium,worktree,git-commit-1,1,wall,707.533,ms,OK,reference: git add -A + git commit; not the same operation
+medium,projfs,commit-1,2,wall,46.229,ms,OK,1 files appended to; 37 bytes in them
+medium,projfs,commit-1,2,internal,18.438,ms,OK,
+medium,projfs,commit-1,2,bytes_read,37,bytes,OK,
+medium,projfs,commit-1,2,bytes_written,37,bytes,OK,
+medium,projfs,status-after-commit-1,2,wall,32.8,ms,OK,
+medium,projfs,commit-1,2,provider_peak_working_set,25112576,bytes,OK,
+medium,projfs,commit-1,2,provider_cpu,62.5,ms,OK,
+medium,projfs,discard-after-commit-1,2,wall,27.595,ms,OK,
+medium,projfs,discard-after-commit-1,2,internal,7.876,ms,OK,
+medium,worktree,git-commit-1,2,wall,689.339,ms,OK,reference: git add -A + git commit; not the same operation
+medium,projfs,commit-1,3,wall,46.472,ms,OK,1 files appended to; 37 bytes in them
+medium,projfs,commit-1,3,internal,18.398,ms,OK,
+medium,projfs,commit-1,3,bytes_read,37,bytes,OK,
+medium,projfs,commit-1,3,bytes_written,37,bytes,OK,
+medium,projfs,status-after-commit-1,3,wall,26.897,ms,OK,
+medium,projfs,commit-1,3,provider_peak_working_set,25055232,bytes,OK,
+medium,projfs,commit-1,3,provider_cpu,62.5,ms,OK,
+medium,projfs,discard-after-commit-1,3,wall,27.547,ms,OK,
+medium,projfs,discard-after-commit-1,3,internal,8.031,ms,OK,
+medium,worktree,git-commit-1,3,wall,762.267,ms,OK,reference: git add -A + git commit; not the same operation
+medium,projfs,commit-1,4,wall,63.82,ms,OK,1 files appended to; 37 bytes in them
+medium,projfs,commit-1,4,internal,19.088,ms,OK,
+medium,projfs,commit-1,4,bytes_read,37,bytes,OK,
+medium,projfs,commit-1,4,bytes_written,37,bytes,OK,
+medium,projfs,status-after-commit-1,4,wall,24.142,ms,OK,
+medium,projfs,commit-1,4,provider_peak_working_set,25309184,bytes,OK,
+medium,projfs,commit-1,4,provider_cpu,93.75,ms,OK,
+medium,projfs,discard-after-commit-1,4,wall,26.966,ms,OK,
+medium,projfs,discard-after-commit-1,4,internal,7.433,ms,OK,
+medium,worktree,git-commit-1,4,wall,600.104,ms,OK,reference: git add -A + git commit; not the same operation
+medium,projfs,commit-1,5,wall,42.736,ms,OK,1 files appended to; 37 bytes in them
+medium,projfs,commit-1,5,internal,18.623,ms,OK,
+medium,projfs,commit-1,5,bytes_read,37,bytes,OK,
+medium,projfs,commit-1,5,bytes_written,37,bytes,OK,
+medium,projfs,status-after-commit-1,5,wall,20.555,ms,OK,
+medium,projfs,commit-1,5,provider_peak_working_set,25395200,bytes,OK,
+medium,projfs,commit-1,5,provider_cpu,46.875,ms,OK,
+medium,projfs,discard-after-commit-1,5,wall,29.913,ms,OK,
+medium,projfs,discard-after-commit-1,5,internal,7.921,ms,OK,
+medium,worktree,git-commit-1,5,wall,961.305,ms,OK,reference: git add -A + git commit; not the same operation
+medium,projfs,commit-100,1,wall,138.944,ms,OK,100 files appended to; 1569327 bytes in them
+medium,projfs,commit-100,1,internal,115.448,ms,OK,
+medium,projfs,commit-100,1,bytes_read,1569327,bytes,OK,
+medium,projfs,commit-100,1,bytes_written,1569327,bytes,OK,
+medium,projfs,status-after-commit-100,1,wall,64.497,ms,OK,
+medium,projfs,commit-100,1,provider_peak_working_set,33734656,bytes,OK,
+medium,projfs,commit-100,1,provider_cpu,156.25,ms,OK,
+medium,projfs,discard-after-commit-100,1,wall,50.613,ms,OK,
+medium,projfs,discard-after-commit-100,1,internal,35.244,ms,OK,
+medium,worktree,git-commit-100,1,wall,1153.082,ms,OK,reference: git add -A + git commit; not the same operation
+medium,projfs,commit-100,2,wall,134.371,ms,OK,100 files appended to; 1569327 bytes in them
+medium,projfs,commit-100,2,internal,113.788,ms,OK,
+medium,projfs,commit-100,2,bytes_read,1569327,bytes,OK,
+medium,projfs,commit-100,2,bytes_written,1569327,bytes,OK,
+medium,projfs,status-after-commit-100,2,wall,81.501,ms,OK,
+medium,projfs,commit-100,2,provider_peak_working_set,34066432,bytes,OK,
+medium,projfs,commit-100,2,provider_cpu,296.875,ms,OK,
+medium,projfs,discard-after-commit-100,2,wall,71.654,ms,OK,
+medium,projfs,discard-after-commit-100,2,internal,54.193,ms,OK,
+medium,worktree,git-commit-100,2,wall,1113.645,ms,OK,reference: git add -A + git commit; not the same operation
+medium,projfs,commit-100,3,wall,167.243,ms,OK,100 files appended to; 1569327 bytes in them
+medium,projfs,commit-100,3,internal,143.182,ms,OK,
+medium,projfs,commit-100,3,bytes_read,1569327,bytes,OK,
+medium,projfs,commit-100,3,bytes_written,1569327,bytes,OK,
+medium,projfs,status-after-commit-100,3,wall,61.984,ms,OK,
+medium,projfs,commit-100,3,provider_peak_working_set,34000896,bytes,OK,
+medium,projfs,commit-100,3,provider_cpu,328.125,ms,OK,
+medium,projfs,discard-after-commit-100,3,wall,76.822,ms,OK,
+medium,projfs,discard-after-commit-100,3,internal,55.541,ms,OK,
+medium,worktree,git-commit-100,3,wall,1059.843,ms,OK,reference: git add -A + git commit; not the same operation
+medium,projfs,commit-100,4,wall,146.569,ms,OK,100 files appended to; 1569327 bytes in them
+medium,projfs,commit-100,4,internal,127.304,ms,OK,
+medium,projfs,commit-100,4,bytes_read,1569327,bytes,OK,
+medium,projfs,commit-100,4,bytes_written,1569327,bytes,OK,
+medium,projfs,status-after-commit-100,4,wall,87.108,ms,OK,
+medium,projfs,commit-100,4,provider_peak_working_set,33947648,bytes,OK,
+medium,projfs,commit-100,4,provider_cpu,390.625,ms,OK,
+medium,projfs,discard-after-commit-100,4,wall,75.283,ms,OK,
+medium,projfs,discard-after-commit-100,4,internal,55.018,ms,OK,
+medium,worktree,git-commit-100,4,wall,817.407,ms,OK,reference: git add -A + git commit; not the same operation
+medium,projfs,commit-100,5,wall,153.9,ms,OK,100 files appended to; 1569327 bytes in them
+medium,projfs,commit-100,5,internal,121.461,ms,OK,
+medium,projfs,commit-100,5,bytes_read,1569327,bytes,OK,
+medium,projfs,commit-100,5,bytes_written,1569327,bytes,OK,
+medium,projfs,status-after-commit-100,5,wall,79.75,ms,OK,
+medium,projfs,commit-100,5,provider_peak_working_set,34164736,bytes,OK,
+medium,projfs,commit-100,5,provider_cpu,328.125,ms,OK,
+medium,projfs,discard-after-commit-100,5,wall,54.992,ms,OK,
+medium,projfs,discard-after-commit-100,5,internal,35.662,ms,OK,
+medium,worktree,git-commit-100,5,wall,1112.91,ms,OK,reference: git add -A + git commit; not the same operation
+medium,projfs,commit-1000,1,wall,1201.726,ms,OK,1000 files appended to; 9594113 bytes in them
+medium,projfs,commit-1000,1,internal,1180.880,ms,OK,
+medium,projfs,commit-1000,1,bytes_read,9594113,bytes,OK,
+medium,projfs,commit-1000,1,bytes_written,9594113,bytes,OK,
+medium,projfs,status-after-commit-1000,1,wall,508.354,ms,OK,
+medium,projfs,commit-1000,1,provider_peak_working_set,44359680,bytes,OK,
+medium,projfs,commit-1000,1,provider_cpu,2250,ms,OK,
+medium,projfs,discard-after-commit-1000,1,wall,373.139,ms,OK,
+medium,projfs,discard-after-commit-1000,1,internal,352.620,ms,OK,
+medium,worktree,git-commit-1000,1,wall,3087.545,ms,OK,reference: git add -A + git commit; not the same operation
+medium,projfs,commit-1000,2,wall,1400.106,ms,OK,1000 files appended to; 9594113 bytes in them
+medium,projfs,commit-1000,2,internal,1377.008,ms,OK,
+medium,projfs,commit-1000,2,bytes_read,9594113,bytes,OK,
+medium,projfs,commit-1000,2,bytes_written,9594113,bytes,OK,
+medium,projfs,status-after-commit-1000,2,wall,509.221,ms,OK,
+medium,projfs,commit-1000,2,provider_peak_working_set,43819008,bytes,OK,
+medium,projfs,commit-1000,2,provider_cpu,2562.5,ms,OK,
+medium,projfs,discard-after-commit-1000,2,wall,345.804,ms,OK,
+medium,projfs,discard-after-commit-1000,2,internal,324.421,ms,OK,
+medium,worktree,git-commit-1000,2,wall,3070.926,ms,OK,reference: git add -A + git commit; not the same operation
+medium,projfs,commit-1000,3,wall,1161.839,ms,OK,1000 files appended to; 9594113 bytes in them
+medium,projfs,commit-1000,3,internal,1138.247,ms,OK,
+medium,projfs,commit-1000,3,bytes_read,9594113,bytes,OK,
+medium,projfs,commit-1000,3,bytes_written,9594113,bytes,OK,
+medium,projfs,status-after-commit-1000,3,wall,534.832,ms,OK,
+medium,projfs,commit-1000,3,provider_peak_working_set,43704320,bytes,OK,
+medium,projfs,commit-1000,3,provider_cpu,2359.375,ms,OK,
+medium,projfs,discard-after-commit-1000,3,wall,297.381,ms,OK,
+medium,projfs,discard-after-commit-1000,3,internal,276.252,ms,OK,
+medium,worktree,git-commit-1000,3,wall,3286.419,ms,OK,reference: git add -A + git commit; not the same operation
+medium,projfs,commit-1000,4,wall,1147.92,ms,OK,1000 files appended to; 9594113 bytes in them
+medium,projfs,commit-1000,4,internal,1126.260,ms,OK,
+medium,projfs,commit-1000,4,bytes_read,9594113,bytes,OK,
+medium,projfs,commit-1000,4,bytes_written,9594113,bytes,OK,
+medium,projfs,status-after-commit-1000,4,wall,522.257,ms,OK,
+medium,projfs,commit-1000,4,provider_peak_working_set,44163072,bytes,OK,
+medium,projfs,commit-1000,4,provider_cpu,2390.625,ms,OK,
+medium,projfs,discard-after-commit-1000,4,wall,364.126,ms,OK,
+medium,projfs,discard-after-commit-1000,4,internal,338.650,ms,OK,
+medium,worktree,git-commit-1000,4,wall,2749.269,ms,OK,reference: git add -A + git commit; not the same operation
+medium,projfs,commit-1000,5,wall,1510.087,ms,OK,1000 files appended to; 9594113 bytes in them
+medium,projfs,commit-1000,5,internal,1487.566,ms,OK,
+medium,projfs,commit-1000,5,bytes_read,9594113,bytes,OK,
+medium,projfs,commit-1000,5,bytes_written,9594113,bytes,OK,
+medium,projfs,status-after-commit-1000,5,wall,549.019,ms,OK,
+medium,projfs,commit-1000,5,provider_peak_working_set,43851776,bytes,OK,
+medium,projfs,commit-1000,5,provider_cpu,2718.75,ms,OK,
+medium,projfs,discard-after-commit-1000,5,wall,367.227,ms,OK,
+medium,projfs,discard-after-commit-1000,5,internal,342.826,ms,OK,
+medium,worktree,git-commit-1000,5,wall,5167.617,ms,OK,reference: git add -A + git commit; not the same operation
+medium,projfs,disk-1,1,free_space_delta,52862976,bytes,OK,1 Workspaces mounted and listed and git status run in each
+medium,projfs,disk-1,1,wall,13359.273,ms,OK,mount + listing + git status of all  one after another
+medium,projfs,disk-1,1,on_disk_bytes_sum,46117801,bytes,OK,content bytes of hydrated and full files in all Workspaces
+medium,projfs,disk-1,1,on_disk_placeholders_sum,0,count,OK,
+medium,projfs,disk-1,1,on_disk_content_files_sum,43,count,OK,
+medium,projfs,disk-1,1,providers_peak_working_set_sum,43782144,bytes,OK,
+medium,projfs,disk-1,2,free_space_delta,53354496,bytes,OK,1 Workspaces mounted and listed and git status run in each
+medium,projfs,disk-1,2,wall,14993.435,ms,OK,mount + listing + git status of all  one after another
+medium,projfs,disk-1,2,on_disk_bytes_sum,46117801,bytes,OK,content bytes of hydrated and full files in all Workspaces
+medium,projfs,disk-1,2,on_disk_placeholders_sum,0,count,OK,
+medium,projfs,disk-1,2,on_disk_content_files_sum,43,count,OK,
+medium,projfs,disk-1,2,providers_peak_working_set_sum,44064768,bytes,OK,
+medium,projfs,disk-1,3,free_space_delta,52547584,bytes,OK,1 Workspaces mounted and listed and git status run in each
+medium,projfs,disk-1,3,wall,12983.05,ms,OK,mount + listing + git status of all  one after another
+medium,projfs,disk-1,3,on_disk_bytes_sum,46117801,bytes,OK,content bytes of hydrated and full files in all Workspaces
+medium,projfs,disk-1,3,on_disk_placeholders_sum,0,count,OK,
+medium,projfs,disk-1,3,on_disk_content_files_sum,43,count,OK,
+medium,projfs,disk-1,3,providers_peak_working_set_sum,43839488,bytes,OK,
+medium,projfs,disk-1,4,free_space_delta,53616640,bytes,OK,1 Workspaces mounted and listed and git status run in each
+medium,projfs,disk-1,4,wall,12699.061,ms,OK,mount + listing + git status of all  one after another
+medium,projfs,disk-1,4,on_disk_bytes_sum,46117801,bytes,OK,content bytes of hydrated and full files in all Workspaces
+medium,projfs,disk-1,4,on_disk_placeholders_sum,0,count,OK,
+medium,projfs,disk-1,4,on_disk_content_files_sum,43,count,OK,
+medium,projfs,disk-1,4,providers_peak_working_set_sum,43843584,bytes,OK,
+medium,projfs,disk-1,5,free_space_delta,52613120,bytes,OK,1 Workspaces mounted and listed and git status run in each
+medium,projfs,disk-1,5,wall,15178.244,ms,OK,mount + listing + git status of all  one after another
+medium,projfs,disk-1,5,on_disk_bytes_sum,46117801,bytes,OK,content bytes of hydrated and full files in all Workspaces
+medium,projfs,disk-1,5,on_disk_placeholders_sum,0,count,OK,
+medium,projfs,disk-1,5,on_disk_content_files_sum,43,count,OK,
+medium,projfs,disk-1,5,providers_peak_working_set_sum,43827200,bytes,OK,
+medium,copy,disk-1,1,free_space_delta,312373248,bytes,OK,1 full copies
+medium,copy,disk-1,1,tree_bytes_sum,198777958,bytes,OK,count times the source tree  .git included
+medium,worktree,disk-1,1,free_space_delta,238272512,bytes,OK,1 worktrees
+medium,worktree,disk-1,1,tree_bytes_sum,152431524,bytes,OK,count times the checked-out files  without .git
+medium,copy,disk-1,2,free_space_delta,300978176,bytes,OK,1 full copies
+medium,copy,disk-1,2,tree_bytes_sum,198777958,bytes,OK,count times the source tree  .git included
+medium,worktree,disk-1,2,free_space_delta,242171904,bytes,OK,1 worktrees
+medium,worktree,disk-1,2,tree_bytes_sum,152431524,bytes,OK,count times the checked-out files  without .git
+medium,copy,disk-1,3,free_space_delta,278863872,bytes,OK,1 full copies
+medium,copy,disk-1,3,tree_bytes_sum,198777958,bytes,OK,count times the source tree  .git included
+medium,worktree,disk-1,3,free_space_delta,244805632,bytes,OK,1 worktrees
+medium,worktree,disk-1,3,tree_bytes_sum,152431524,bytes,OK,count times the checked-out files  without .git
+medium,copy,disk-1,4,free_space_delta,296001536,bytes,OK,1 full copies
+medium,copy,disk-1,4,tree_bytes_sum,198777958,bytes,OK,count times the source tree  .git included
+medium,worktree,disk-1,4,free_space_delta,249126912,bytes,OK,1 worktrees
+medium,worktree,disk-1,4,tree_bytes_sum,152431524,bytes,OK,count times the checked-out files  without .git
+medium,copy,disk-1,5,free_space_delta,303550464,bytes,OK,1 full copies
+medium,copy,disk-1,5,tree_bytes_sum,198777958,bytes,OK,count times the source tree  .git included
+medium,worktree,disk-1,5,free_space_delta,243220480,bytes,OK,1 worktrees
+medium,worktree,disk-1,5,tree_bytes_sum,152431524,bytes,OK,count times the checked-out files  without .git
+medium,projfs,disk-4,1,free_space_delta,214450176,bytes,OK,4 Workspaces mounted and listed and git status run in each
+medium,projfs,disk-4,1,wall,56627.295,ms,OK,mount + listing + git status of all  one after another
+medium,projfs,disk-4,1,on_disk_bytes_sum,184471204,bytes,OK,content bytes of hydrated and full files in all Workspaces
+medium,projfs,disk-4,1,on_disk_placeholders_sum,0,count,OK,
+medium,projfs,disk-4,1,on_disk_content_files_sum,172,count,OK,
+medium,projfs,disk-4,1,providers_peak_working_set_sum,175034368,bytes,OK,
+medium,projfs,disk-4,2,free_space_delta,213299200,bytes,OK,4 Workspaces mounted and listed and git status run in each
+medium,projfs,disk-4,2,wall,53798.985,ms,OK,mount + listing + git status of all  one after another
+medium,projfs,disk-4,2,on_disk_bytes_sum,184471204,bytes,OK,content bytes of hydrated and full files in all Workspaces
+medium,projfs,disk-4,2,on_disk_placeholders_sum,0,count,OK,
+medium,projfs,disk-4,2,on_disk_content_files_sum,172,count,OK,
+medium,projfs,disk-4,2,providers_peak_working_set_sum,174923776,bytes,OK,
+medium,projfs,disk-4,3,free_space_delta,202407936,bytes,OK,4 Workspaces mounted and listed and git status run in each
+medium,projfs,disk-4,3,wall,53863.131,ms,OK,mount + listing + git status of all  one after another
+medium,projfs,disk-4,3,on_disk_bytes_sum,184471204,bytes,OK,content bytes of hydrated and full files in all Workspaces
+medium,projfs,disk-4,3,on_disk_placeholders_sum,0,count,OK,
+medium,projfs,disk-4,3,on_disk_content_files_sum,172,count,OK,
+medium,projfs,disk-4,3,providers_peak_working_set_sum,175841280,bytes,OK,
+medium,projfs,disk-4,4,free_space_delta,203485184,bytes,OK,4 Workspaces mounted and listed and git status run in each
+medium,projfs,disk-4,4,wall,49775.578,ms,OK,mount + listing + git status of all  one after another
+medium,projfs,disk-4,4,on_disk_bytes_sum,184471204,bytes,OK,content bytes of hydrated and full files in all Workspaces
+medium,projfs,disk-4,4,on_disk_placeholders_sum,0,count,OK,
+medium,projfs,disk-4,4,on_disk_content_files_sum,172,count,OK,
+medium,projfs,disk-4,4,providers_peak_working_set_sum,175869952,bytes,OK,
+medium,projfs,disk-4,5,free_space_delta,203567104,bytes,OK,4 Workspaces mounted and listed and git status run in each
+medium,projfs,disk-4,5,wall,53380.095,ms,OK,mount + listing + git status of all  one after another
+medium,projfs,disk-4,5,on_disk_bytes_sum,184471204,bytes,OK,content bytes of hydrated and full files in all Workspaces
+medium,projfs,disk-4,5,on_disk_placeholders_sum,0,count,OK,
+medium,projfs,disk-4,5,on_disk_content_files_sum,172,count,OK,
+medium,projfs,disk-4,5,providers_peak_working_set_sum,175411200,bytes,OK,
+medium,copy,disk-4,1,free_space_delta,1212928000,bytes,OK,4 full copies
+medium,copy,disk-4,1,tree_bytes_sum,795111832,bytes,OK,count times the source tree  .git included
+medium,worktree,disk-4,1,free_space_delta,946720768,bytes,OK,4 worktrees
+medium,worktree,disk-4,1,tree_bytes_sum,609726096,bytes,OK,count times the checked-out files  without .git
+medium,projfs,disk-16,1,free_space_delta,829845504,bytes,OK,16 Workspaces mounted and listed and git status run in each
+medium,projfs,disk-16,1,wall,124956.479,ms,OK,mount + listing + git status of all  one after another
+medium,projfs,disk-16,1,on_disk_bytes_sum,737884816,bytes,OK,content bytes of hydrated and full files in all Workspaces
+medium,projfs,disk-16,1,on_disk_placeholders_sum,0,count,OK,
+medium,projfs,disk-16,1,on_disk_content_files_sum,688,count,OK,
+medium,projfs,disk-16,1,providers_peak_working_set_sum,702603264,bytes,OK,
+medium,projfs,disk-16,2,free_space_delta,834416640,bytes,OK,16 Workspaces mounted and listed and git status run in each
+medium,projfs,disk-16,2,wall,120484.704,ms,OK,mount + listing + git status of all  one after another
+medium,projfs,disk-16,2,on_disk_bytes_sum,737884816,bytes,OK,content bytes of hydrated and full files in all Workspaces
+medium,projfs,disk-16,2,on_disk_placeholders_sum,0,count,OK,
+medium,projfs,disk-16,2,on_disk_content_files_sum,688,count,OK,
+medium,projfs,disk-16,2,providers_peak_working_set_sum,701501440,bytes,OK,
+medium,projfs,disk-16,3,free_space_delta,831954944,bytes,OK,16 Workspaces mounted and listed and git status run in each
+medium,projfs,disk-16,3,wall,139647.762,ms,OK,mount + listing + git status of all  one after another
+medium,projfs,disk-16,3,on_disk_bytes_sum,737884816,bytes,OK,content bytes of hydrated and full files in all Workspaces
+medium,projfs,disk-16,3,on_disk_placeholders_sum,0,count,OK,
+medium,projfs,disk-16,3,on_disk_content_files_sum,688,count,OK,
+medium,projfs,disk-16,3,providers_peak_working_set_sum,702730240,bytes,OK,
+medium,projfs,disk-16,4,free_space_delta,839434240,bytes,OK,16 Workspaces mounted and listed and git status run in each
+medium,projfs,disk-16,4,wall,139305.757,ms,OK,mount + listing + git status of all  one after another
+medium,projfs,disk-16,4,on_disk_bytes_sum,737884816,bytes,OK,content bytes of hydrated and full files in all Workspaces
+medium,projfs,disk-16,4,on_disk_placeholders_sum,0,count,OK,
+medium,projfs,disk-16,4,on_disk_content_files_sum,688,count,OK,
+medium,projfs,disk-16,4,providers_peak_working_set_sum,703197184,bytes,OK,
+medium,projfs,disk-16,5,free_space_delta,829612032,bytes,OK,16 Workspaces mounted and listed and git status run in each
+medium,projfs,disk-16,5,wall,142332.028,ms,OK,mount + listing + git status of all  one after another
+medium,projfs,disk-16,5,on_disk_bytes_sum,737884816,bytes,OK,content bytes of hydrated and full files in all Workspaces
+medium,projfs,disk-16,5,on_disk_placeholders_sum,0,count,OK,
+medium,projfs,disk-16,5,on_disk_content_files_sum,688,count,OK,
+medium,projfs,disk-16,5,providers_peak_working_set_sum,701927424,bytes,OK,
+medium,copy,disk-16,1,free_space_delta,4845842432,bytes,OK,16 full copies
+medium,copy,disk-16,1,tree_bytes_sum,3180447328,bytes,OK,count times the source tree  .git included
+medium,worktree,disk-16,1,free_space_delta,3843502080,bytes,OK,16 worktrees
+medium,worktree,disk-16,1,tree_bytes_sum,2438904384,bytes,OK,count times the checked-out files  without .git
+build,projfs,store-init,1,wall,1726.676,ms,OK,setup: Project Init of the source tree with .git; 304 entries
+build,projfs,store-init,1,internal,835.052,ms,OK,
+build,projfs,store-init,1,store_file,1593344,bytes,OK,
+build,projfs,build-full,1,wall,13496.007,ms,OK,cargo build --offline --locked; target directory inside the tree
+build,projfs,build-incremental,1,wall,2980.121,ms,OK,after appending a comment to crates\core\main.rs
+build,projfs,disk-after-build,1,free_space_delta,399867904,bytes,OK,
+build,projfs,disk-after-build,1,on_disk_bytes,478163751,bytes,OK,content bytes of hydrated and full files
+build,projfs,disk-after-build,1,on_disk_placeholders,33,count,OK,
+build,projfs,disk-after-build,1,on_disk_hydrated,98,count,OK,
+build,projfs,disk-after-build,1,on_disk_full,1326,count,OK,
+build,projfs,disk-after-build,1,on_disk_directories,156,count,OK,
+build,projfs,commit-after-build,1,wall,13993.212,ms,OK,the Workspace Commit includes the target directory
+build,projfs,commit-after-build,1,bytes_read,621808005,bytes,OK,
+build,projfs,commit-after-build,1,applied,1407,count,OK,
+build,projfs,build,1,provider_peak_working_set,46673920,bytes,OK,
+build,projfs,build,1,provider_cpu,11640.625,ms,OK,
+build,projfs,discard-after-build,1,wall,642.29,ms,OK,
+build,projfs,discard-after-build,1,internal,620.551,ms,OK,
+build,copy,build-full,1,wall,11021.823,ms,OK,cargo build --offline --locked; target directory inside the tree
+build,copy,build-incremental,1,wall,2442.404,ms,OK,after appending a comment to crates\core\main.rs
+build,copy,disk-after-build,1,free_space_delta,394981376,bytes,OK,
+build,worktree,build-full,1,wall,10984.022,ms,OK,cargo build --offline --locked; target directory inside the tree
+build,worktree,build-incremental,1,wall,2301.358,ms,OK,after appending a comment to crates\core\main.rs
+build,projfs,build-full,2,wall,12412.344,ms,OK,cargo build --offline --locked; target directory inside the tree
+build,projfs,build-incremental,2,wall,3221.054,ms,OK,after appending a comment to crates\core\main.rs
+build,projfs,disk-after-build,2,free_space_delta,398983168,bytes,OK,
+build,projfs,disk-after-build,2,on_disk_bytes,478163748,bytes,OK,content bytes of hydrated and full files
+build,projfs,disk-after-build,2,on_disk_placeholders,33,count,OK,
+build,projfs,disk-after-build,2,on_disk_hydrated,98,count,OK,
+build,projfs,disk-after-build,2,on_disk_full,1326,count,OK,
+build,projfs,disk-after-build,2,on_disk_directories,156,count,OK,
+build,projfs,commit-after-build,2,wall,11864.866,ms,OK,the Workspace Commit includes the target directory
+build,projfs,commit-after-build,2,bytes_read,621808002,bytes,OK,
+build,projfs,commit-after-build,2,applied,1407,count,OK,
+build,projfs,build,2,provider_peak_working_set,46821376,bytes,OK,
+build,projfs,build,2,provider_cpu,9875,ms,OK,
+build,projfs,discard-after-build,2,wall,531.638,ms,OK,
+build,projfs,discard-after-build,2,internal,511.209,ms,OK,
+build,copy,build-full,2,wall,11443.796,ms,OK,cargo build --offline --locked; target directory inside the tree
+build,copy,build-incremental,2,wall,2003.337,ms,OK,after appending a comment to crates\core\main.rs
+build,copy,disk-after-build,2,free_space_delta,394608640,bytes,OK,
+build,worktree,build-full,2,wall,10838.863,ms,OK,cargo build --offline --locked; target directory inside the tree
+build,worktree,build-incremental,2,wall,2387.168,ms,OK,after appending a comment to crates\core\main.rs
+build,projfs,build-full,3,wall,11671.496,ms,OK,cargo build --offline --locked; target directory inside the tree
+build,projfs,build-incremental,3,wall,3018.187,ms,OK,after appending a comment to crates\core\main.rs
+build,projfs,disk-after-build,3,free_space_delta,402571264,bytes,OK,
+build,projfs,disk-after-build,3,on_disk_bytes,478163754,bytes,OK,content bytes of hydrated and full files
+build,projfs,disk-after-build,3,on_disk_placeholders,33,count,OK,
+build,projfs,disk-after-build,3,on_disk_hydrated,98,count,OK,
+build,projfs,disk-after-build,3,on_disk_full,1326,count,OK,
+build,projfs,disk-after-build,3,on_disk_directories,156,count,OK,
+build,projfs,commit-after-build,3,wall,12218.208,ms,OK,the Workspace Commit includes the target directory
+build,projfs,commit-after-build,3,bytes_read,621808008,bytes,OK,
+build,projfs,commit-after-build,3,applied,1407,count,OK,
+build,projfs,build,3,provider_peak_working_set,46428160,bytes,OK,
+build,projfs,build,3,provider_cpu,10203.125,ms,OK,
+build,projfs,discard-after-build,3,wall,481.359,ms,OK,
+build,projfs,discard-after-build,3,internal,460.656,ms,OK,
+build,copy,build-full,3,wall,11535.166,ms,OK,cargo build --offline --locked; target directory inside the tree
+build,copy,build-incremental,3,wall,2430.954,ms,OK,after appending a comment to crates\core\main.rs
+build,copy,disk-after-build,3,free_space_delta,386670592,bytes,OK,
+build,worktree,build-full,3,wall,10771.734,ms,OK,cargo build --offline --locked; target directory inside the tree
+build,worktree,build-incremental,3,wall,2536.882,ms,OK,after appending a comment to crates\core\main.rs
+build,projfs,build-full,4,wall,12063.282,ms,OK,cargo build --offline --locked; target directory inside the tree
+build,projfs,build-incremental,4,wall,3033.571,ms,OK,after appending a comment to crates\core\main.rs
+build,projfs,disk-after-build,4,free_space_delta,403087360,bytes,OK,
+build,projfs,disk-after-build,4,on_disk_bytes,478147359,bytes,OK,content bytes of hydrated and full files
+build,projfs,disk-after-build,4,on_disk_placeholders,33,count,OK,
+build,projfs,disk-after-build,4,on_disk_hydrated,98,count,OK,
+build,projfs,disk-after-build,4,on_disk_full,1326,count,OK,
+build,projfs,disk-after-build,4,on_disk_directories,156,count,OK,
+build,projfs,commit-after-build,4,wall,11943.034,ms,OK,the Workspace Commit includes the target directory
+build,projfs,commit-after-build,4,bytes_read,621783421,bytes,OK,
+build,projfs,commit-after-build,4,applied,1407,count,OK,
+build,projfs,build,4,provider_peak_working_set,46956544,bytes,OK,
+build,projfs,build,4,provider_cpu,10015.625,ms,OK,
+build,projfs,discard-after-build,4,wall,537.782,ms,OK,
+build,projfs,discard-after-build,4,internal,516.279,ms,OK,
+build,copy,build-full,4,wall,10774.48,ms,OK,cargo build --offline --locked; target directory inside the tree
+build,copy,build-incremental,4,wall,2389.214,ms,OK,after appending a comment to crates\core\main.rs
+build,copy,disk-after-build,4,free_space_delta,394534912,bytes,OK,
+build,worktree,build-full,4,wall,11871.903,ms,OK,cargo build --offline --locked; target directory inside the tree
+build,worktree,build-incremental,4,wall,2639.754,ms,OK,after appending a comment to crates\core\main.rs
+build,projfs,build-full,5,wall,11955.594,ms,OK,cargo build --offline --locked; target directory inside the tree
+build,projfs,build-incremental,5,wall,3076.957,ms,OK,after appending a comment to crates\core\main.rs
+build,projfs,disk-after-build,5,free_space_delta,390402048,bytes,OK,
+build,projfs,disk-after-build,5,on_disk_bytes,478163753,bytes,OK,content bytes of hydrated and full files
+build,projfs,disk-after-build,5,on_disk_placeholders,33,count,OK,
+build,projfs,disk-after-build,5,on_disk_hydrated,98,count,OK,
+build,projfs,disk-after-build,5,on_disk_full,1326,count,OK,
+build,projfs,disk-after-build,5,on_disk_directories,156,count,OK,
+build,projfs,commit-after-build,5,wall,12132.751,ms,OK,the Workspace Commit includes the target directory
+build,projfs,commit-after-build,5,bytes_read,621808007,bytes,OK,
+build,projfs,commit-after-build,5,applied,1407,count,OK,
+build,projfs,build,5,provider_peak_working_set,47022080,bytes,OK,
+build,projfs,build,5,provider_cpu,10156.25,ms,OK,
+build,projfs,discard-after-build,5,wall,501.522,ms,OK,
+build,projfs,discard-after-build,5,internal,477.078,ms,OK,
+build,copy,build-full,5,wall,11512.269,ms,OK,cargo build --offline --locked; target directory inside the tree
+build,copy,build-incremental,5,wall,2474.921,ms,OK,after appending a comment to crates\core\main.rs
+build,copy,disk-after-build,5,free_space_delta,395132928,bytes,OK,
+build,worktree,build-full,5,wall,11014.046,ms,OK,cargo build --offline --locked; target directory inside the tree
+build,worktree,build-incremental,5,wall,2311.775,ms,OK,after appending a comment to crates\core\main.rs
