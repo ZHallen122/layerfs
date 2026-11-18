@@ -141,7 +141,8 @@ $environment = [ordered]@{
     logical_processors    = $cpu.NumberOfLogicalProcessors
     memory_bytes          = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
     disks                 = @(Get-PhysicalDisk | ForEach-Object { "$($_.FriendlyName) $($_.MediaType) $($_.BusType)" })
-    work_directory        = $Work
+    # Recorded without the user's name: the profile directory as its variable.
+    work_directory        = $Work.Replace($env:USERPROFILE, '%USERPROFILE%')
     work_filesystem       = (Get-Volume -DriveLetter $Drive.Name.Substring(0, 1)).FileSystem
     defender_realtime     = if ($defender) { $defender.RealTimeProtectionEnabled } else { 'unknown' }
     defender_tamper       = if ($defender) { $defender.IsTamperProtected } else { 'unknown' }
