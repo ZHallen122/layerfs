@@ -30,6 +30,12 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $Crate = Split-Path -Parent $PSScriptRoot
+# `powershell -File` hands a comma-separated list over as one string.
+$Fixtures = @($Fixtures | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+$Cases = @($Cases | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+$Known = 'sessions', 'commits', 'disk', 'builds'
+$Unknown = @($Cases | Where-Object { $Known -notcontains $_ })
+if ($Unknown.Count -or -not $Cases.Count) { throw "-Cases takes any of: $($Known -join ', '); got: $($Cases -join ', ')" }
 $Repo = (Resolve-Path (Join-Path $Crate '..\..\..')).Path
 $RunId = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 $Tag = $RunId.ToLower()
