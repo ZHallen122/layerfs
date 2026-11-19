@@ -32,6 +32,25 @@ struct Listed {
     item: LocalItem,
 }
 
+/// A set of names looked up as NTFS compares them: sorted once, so that
+/// comparing two directories' names does not grow with their product.
+pub struct Names(Vec<Vec<u16>>);
+
+impl Names {
+    pub fn new<'a>(names: impl IntoIterator<Item = &'a String>) -> Self {
+        let mut wide: Vec<Vec<u16>> = names.into_iter().map(sys::wide).collect();
+        wide.sort_by(|left, right| sys::compare(left, right));
+        Self(wide)
+    }
+
+    /// Whether the set holds `name`, given as `sys::wide` spells it.
+    pub fn has(&self, name: &[u16]) -> bool {
+        self.0
+            .binary_search_by(|held| sys::compare(held, name))
+            .is_ok()
+    }
+}
+
 /// A reader of the local layer with the directories it listed so far.
 ///
 /// The caller holds the provider's `LocalOnly` guard for its lifetime.

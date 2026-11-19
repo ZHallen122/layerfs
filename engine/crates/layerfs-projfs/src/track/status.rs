@@ -3,7 +3,7 @@
 //! number of changed items (and the bytes of rewritten files of unchanged
 //! length). The tree is walked only when the journal could not answer.
 use super::journal::{Recorded, Rename};
-use super::local::{native, Local, LocalItem};
+use super::local::{native, Local, LocalItem, Names};
 use super::watch::Dirty;
 use crate::provider::tree::{join, Found};
 use crate::provider::Provider;
@@ -230,11 +230,9 @@ impl Classifier<'_> {
                 .resolve(from)?
                 .map(|found| found.path().to_owned())
                 .unwrap_or_default();
+            let shown = Names::new(listed);
             for item in &base.items {
-                let shown = listed
-                    .iter()
-                    .any(|name| sys::compare(&sys::wide(name), &item.wide).is_eq());
-                if shown {
+                if shown.has(&item.wide) {
                     continue;
                 }
                 if renamed.is_some() {

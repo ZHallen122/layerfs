@@ -14,7 +14,7 @@ use crate::provider::Provider;
 use crate::source::{attribute, unix};
 use crate::sys;
 use crate::track::journal::{Recorded, Rename};
-use crate::track::local::{native, Local, LocalItem};
+use crate::track::local::{native, Local, LocalItem, Names};
 use crate::track::watch::Dirty;
 use layerfs_bridge::control::SdkRefusal;
 use layerfs_content::filesystem::PathName;
@@ -285,17 +285,15 @@ impl Capture<'_, '_> {
             // Not a directory in the view: its own path decides.
             _ => return self.path(directory),
         };
+        let shown = Names::new(listed);
         for name in &held {
-            let wide = sys::wide(name);
-            let shown = listed
-                .iter()
-                .any(|other| sys::compare(&sys::wide(other), &wide).is_eq());
-            if !shown {
+            if !shown.has(&sys::wide(name)) {
                 self.path(&join(&spelled, name))?;
             }
         }
+        let exact: std::collections::HashSet<&String> = held.iter().collect();
         for name in listed {
-            if !held.contains(name) {
+            if !exact.contains(name) {
                 self.path(&join(directory, name))?;
             }
         }

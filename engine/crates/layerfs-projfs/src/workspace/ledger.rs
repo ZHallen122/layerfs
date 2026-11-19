@@ -145,9 +145,20 @@ impl Ledger {
 
     /// Forgets `path` and everything below it.
     pub fn forget(&mut self, path: &str) {
-        let (at, below) = (folded(path), format!("{}/", folded(path)));
-        self.files
-            .retain(|key, _| *key != at && !key.starts_with(&below));
+        let at = folded(path);
+        self.files.remove(&at);
+        // The keys below it are one run in the map's order.
+        let below = format!("{at}/");
+        let gone: Vec<String> = self
+            .files
+            .range(below.clone()..)
+            .map(|(key, _)| key)
+            .take_while(|key| key.starts_with(&below))
+            .cloned()
+            .collect();
+        for key in gone {
+            self.files.remove(&key);
+        }
     }
 
     /// The recorded files, each with its path as spelled.
