@@ -258,11 +258,15 @@ impl Handler for Provider {
     fn notify(&self, notification: Notification) -> Result<(), Hresult> {
         self.notifications.fetch_add(1, Ordering::Relaxed);
         match notification {
-            Notification::Created { path, .. }
-            | Notification::Overwritten { path }
-            | Notification::ConvertingToFull { path }
-            | Notification::Modified { path }
-            | Notification::Deleted { path, .. } => self.journal.touch(&path),
+            // Which items changed is read from the volume's change journal,
+            // not from these reports. Only a rename and a link are kept:
+            // the journal names no path, and these say which old name a new
+            // one was.
+            Notification::Created { .. }
+            | Notification::Overwritten { .. }
+            | Notification::ConvertingToFull { .. }
+            | Notification::Modified { .. }
+            | Notification::Deleted { .. } => {}
             Notification::Renamed {
                 from,
                 to,

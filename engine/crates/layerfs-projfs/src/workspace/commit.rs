@@ -1,6 +1,6 @@
-//! Commit: capture the journaled changes into the bound Workspace, publish
-//! through the engine's existing Commit, then move the projection's base to
-//! the root the engine installed.
+//! Commit: capture the changes the volume's change journal marks into the
+//! bound Workspace, publish through the engine's existing Commit, then move
+//! the projection's base to the root the engine installed.
 //!
 //! Publication, merge with a moved Branch head and Conflict detection are
 //! the engine's (`BoundWorkspace::commit_captured`); nothing here decides
@@ -9,16 +9,19 @@
 //! written to the local directory for the user to resolve, as a FUSE mount
 //! would show them.
 use super::capture::{capture, CaptureError, Captured};
+use super::ledger::{Ledger, Stored};
 use super::mount::{Workspace, WorkspaceError};
 use crate::provider::serve::basic_info;
 use crate::provider::tree::{join, Found, Tree};
 use crate::source::snapshot::SnapshotSource;
 use crate::sys;
-use crate::track::local::{native, Local};
+use crate::track::journal::Recorded;
+use crate::track::local::{native, Local, LocalItem};
+use crate::track::watch::Pending;
 use layerfs_content::object::inode_leaf::InodeKind;
 use layerfs_content::ObjectId;
 use layerfs_history::CommitOutcome;
-use layerfs_store_service::history::lookup::{hex, unhex};
+use layerfs_store_service::history::lookup::hex;
 use layerfs_store_service::store::CommitOptions;
 use layerfs_store_service::write::mutation::Mutation;
 use std::sync::Arc;
@@ -32,14 +35,18 @@ pub enum Outcome {
     UpToDate { head: Option<String>, root: String },
 }
 
-/// Placeholders brought to a new base.
+/// On-disk items brought to a new base.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Rebased {
     /// On-disk placeholders given the new base's facts and content.
     pub updated: u64,
     /// On-disk placeholders removed because the new base has no such file.
     pub removed: u64,
-    /// On-disk placeholders ProjFS would not change, with its reason bits.
+    /// Committed full files, unchanged since their Commit, that the new
+    /// base holds differently or not at all: removed from the disk, so the
+    /// new base shows through.
+    pub replaced: u64,
+    /// On-disk items ProjFS would not change, with its reason bits.
     pub refused: Vec<(String, i32)>,
 }
 
@@ -67,6 +74,10 @@ pub enum CommitRefusal {
     },
     /// The engine refused; the Workspace is unchanged and may commit again.
     Failed(String),
+    /// The Branch moved while no provider served this Workspace. The engine
+    /// can bind a Workspace only at a Branch's present head, so the merge
+    /// base is gone and a Commit could silently undo the Branch's changes.
+    Diverged { recorded: String, head: String },
     /// The outcome is not known; the engine keeps the Workspace's custody
     /// and nothing is retried.
     Unknown(String),
@@ -82,6 +93,11 @@ impl std::fmt::Display for CommitRefusal {
                 conflicts.len()
             ),
             Self::Failed(text) => write!(f, "Failed: {text}"),
+            Self::Diverged { recorded, head } => write!(
+                f,
+                "Diverged: the Branch moved from {recorded} to {head} while this Workspace \
+                 was not served; it cannot be merged after a restart, and nothing was committed"
+            ),
             Self::Unknown(text) => write!(f, "Unknown: {text}"),
         }
     }
@@ -92,16 +108,62 @@ fn failed(error: impl std::fmt::Display) -> CommitRefusal {
     CommitRefusal::Failed(error.to_string())
 }
 
-/// Brings the on-disk placeholders from `old` to `new`. A file that is
-/// full on disk is a local change and is left alone. Work follows the
+/// Brings the on-disk items from `old` to `new`: every placeholder whose
+/// base entry changed, and every committed full file that is still as it
+/// was committed and that `new` holds differently. A full file changed
+/// since its Commit is a local change and is left alone. Work follows the
 /// items on disk, not the tree.
-fn rebase(workspace: &Workspace, old: &Tree, new: &Tree) -> Result<Rebased, WorkspaceError> {
+fn rebase(
+    workspace: &Workspace,
+    old: &Tree,
+    new: &Tree,
+    ledger: &mut Ledger,
+) -> Result<Rebased, WorkspaceError> {
     let projection = &workspace.projection;
     let flags = sys::ALLOW_DIRTY_METADATA | sys::ALLOW_READ_ONLY;
     let mut rebased = Rebased::default();
     let _local = projection.provider().local_only();
     let mut local = Local::new(projection.root());
     let wrap = |e: &dyn std::fmt::Display| WorkspaceError::Failed(format!("baseline update: {e}"));
+    for (path, stored) in ledger.files() {
+        let held = match new.resolve(&path).map_err(|e| wrap(&e))? {
+            Some(Found::Entry { entry, .. }) => !entry.directory && entry.content == stored.content,
+            _ => false,
+        };
+        if held {
+            continue;
+        }
+        // The Branch holds something else at this path now. What this
+        // Workspace committed there is replaced unless it changed since.
+        ledger.forget(&path);
+        let unchanged = local
+            .find(&path)
+            .map_err(|e| wrap(&e))?
+            .is_some_and(|(_, item)| !item.directory && ledger_matches(&stored, &item));
+        if !unchanged {
+            continue;
+        }
+        let every = flags | sys::ALLOW_DIRTY_DATA | sys::ALLOW_TOMBSTONE;
+        match projection
+            .instance()
+            .delete_item(&path.replace('/', "\\"), every)
+        {
+            Ok(_) => rebased.replaced += 1,
+            Err((_, cause)) => rebased.refused.push((path, cause)),
+        }
+    }
+    for path in ledger.tombstones() {
+        // A name this Workspace deleted is back in the base: its tombstone
+        // would hide it.
+        if new.resolve(&path).map_err(|e| wrap(&e))?.is_some()
+            && projection
+                .instance()
+                .delete_item(&path.replace('/', "\\"), sys::ALLOW_TOMBSTONE)
+                .is_ok()
+        {
+            ledger.cleared(&path);
+        }
+    }
     let mut pending = vec![String::new()];
     while let Some(directory) = pending.pop() {
         for item in local
@@ -148,8 +210,12 @@ fn rebase(workspace: &Workspace, old: &Tree, new: &Tree) -> Result<Rebased, Work
     Ok(rebased)
 }
 
+fn ledger_matches(stored: &Stored, item: &LocalItem) -> bool {
+    stored.size == item.size && stored.written == item.written
+}
+
 impl Workspace {
-    fn source_at(&self, root: ObjectId) -> Result<Arc<SnapshotSource>, WorkspaceError> {
+    pub(super) fn source_at(&self, root: ObjectId) -> Result<Arc<SnapshotSource>, WorkspaceError> {
         SnapshotSource::open(self.engine.store(), self.stack.scope, root)
             .map(Arc::new)
             .map_err(|e| WorkspaceError::Failed(format!("base tree: {e}")))
@@ -158,31 +224,62 @@ impl Workspace {
     /// Serves the root the engine has now installed, updating on-disk
     /// placeholders when `merged` brought in changes this Workspace did
     /// not make.
-    fn advance(&self, merged: bool) -> Result<Rebased, WorkspaceError> {
+    fn advance(&self, merged: bool, ledger: &mut Ledger) -> Result<Rebased, WorkspaceError> {
         let snapshot = self
             .bound
             .snapshot()
             .map_err(|e| WorkspaceError::Failed(format!("binding: {e}")))?;
         let source = self.source_at(snapshot.effective_root)?;
         let tree = &self.projection.provider().tree;
+        // The new base is served first: a file first opened from now on is
+        // projected from it, and what is already on disk is brought over
+        // against the old one.
+        let old = Tree::new(tree.source());
+        tree.replace(source);
         let rebased = if merged {
-            rebase(self, tree, &Tree::new(source.clone()))?
+            rebase(self, &old, tree, ledger)?
         } else {
             Rebased::default()
         };
-        tree.replace(source);
         self.write_record()?;
         Ok(rebased)
     }
 
-    /// Updates on-disk placeholders projected from the tree `root` (hex)
-    /// to the base this Workspace is bound to now.
-    pub(super) fn rebase_from(&self, root: &str) -> Result<Rebased, WorkspaceError> {
-        let old = unhex(root)
-            .and_then(|bytes| ObjectId::from_bytes(&bytes).ok())
-            .ok_or_else(|| WorkspaceError::Failed("recorded base root".to_owned()))?;
-        let old = Tree::new(self.source_at(old)?);
-        rebase(self, &old, &self.projection.provider().tree)
+    /// Records what the published Commit stored for the files the capture
+    /// read, and clears the tombstones of the names it removed.
+    fn settle(&self, ledger: &mut Ledger, captured: &Captured) {
+        let (tree, root) = (&self.projection.provider().tree, self.projection.root());
+        for path in &captured.removed {
+            ledger.forget(path);
+            // The deletion is committed: the base no longer holds the name,
+            // so the marker that hid it has nothing left to hide. Left on
+            // disk it would hide the name if another Workspace brings it
+            // back. Something else may be at the path by now; that stays.
+            if std::fs::symlink_metadata(native(root, path)).is_ok() {
+                continue;
+            }
+            let cleared = self
+                .projection
+                .instance()
+                .delete_item(&path.replace('/', "\\"), sys::ALLOW_TOMBSTONE);
+            if cleared.is_err() {
+                ledger.tombstone(path);
+            }
+        }
+        for seen in &captured.files {
+            if let Ok(Some(Found::Entry { entry, .. })) = tree.resolve(&seen.path) {
+                if !entry.directory {
+                    ledger.record(
+                        &seen.path,
+                        Stored {
+                            size: seen.size,
+                            written: seen.written,
+                            content: entry.content,
+                        },
+                    );
+                }
+            }
+        }
     }
 
     /// Writes the view's present content of `paths` into the directory.
@@ -190,9 +287,9 @@ impl Workspace {
         let mutation = Mutation::new(&self.bound).map_err(|r| failed(r.message))?;
         let result = (|| {
             for path in paths {
+                // Written by this process; the volume's change journal
+                // marks them like any other change.
                 let relative = path.trim_start_matches('/');
-                // ProjFS reports nothing the provider's own process does.
-                self.projection.provider().journal.touch(relative);
                 let local = native(self.projection.root(), relative);
                 match mutation.optional(path).map_err(|r| failed(r.message))? {
                     Some(stat) if stat.kind == InodeKind::RegularFile => {
@@ -229,20 +326,65 @@ impl Workspace {
     }
 
     /// Commits the Workspace's changes to its Branch: one capture, one
-    /// engine Commit, no retry. Changes reported after the capture began
-    /// stay journaled for the next Commit.
+    /// engine Commit, no retry. What the change journal records after the
+    /// capture began is left for the next Commit.
     pub fn commit(&self, message: Option<&str>) -> Result<Committed, CommitRefusal> {
         let _one = self
             .committing
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
+        if let Some((recorded, head)) = &self.diverged {
+            return Err(CommitRefusal::Diverged {
+                recorded: recorded.clone(),
+                head: head.clone(),
+            });
+        }
+        let recorded = self.projection.provider().journal.recorded();
+        // Everything before `position` in the change journal is in
+        // `pending`; what comes after stays with the tracker.
+        let (pending, position) = self.projection.watch().take();
+        let mut ledger = self
+            .ledger
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let published = self
+            .publish(message, &recorded, &pending, &mut ledger)
+            .and_then(|committed| {
+                self.projection.settle(position).map_err(failed)?;
+                ledger.save(self.projection.state()).map_err(failed)?;
+                Ok(committed)
+            });
+        if published.is_err() {
+            // Nothing is known to be published: every item stays suspect.
+            self.projection.watch().restore(pending);
+        }
+        published
+    }
+
+    fn publish(
+        &self,
+        message: Option<&str>,
+        recorded: &Recorded,
+        pending: &Pending,
+        ledger: &mut Ledger,
+    ) -> Result<Committed, CommitRefusal> {
         let provider = self.projection.provider();
-        self.projection
-            .sweep()
-            .map_err(|e| CommitRefusal::Failed(format!("attribute sweep: {e}")))?;
-        let recorded = provider.journal.recorded();
-        let captured = capture(&self.bound, provider, self.projection.root(), &recorded)
-            .map_err(CommitRefusal::Capture)?;
+        let captured = {
+            let known = |path: &str, item: &LocalItem| ledger.vouches(path, item);
+            let dirty = self
+                .projection
+                .dirty(pending, &known)
+                .map_err(|e| CommitRefusal::Failed(format!("changed items: {e}")))?;
+            capture(
+                &self.bound,
+                provider,
+                self.projection.root(),
+                recorded,
+                &dirty,
+                &known,
+            )
+            .map_err(CommitRefusal::Capture)?
+        };
         let success = self
             .bound
             .commit_captured(&CommitOptions {
@@ -264,7 +406,7 @@ impl Workspace {
             })?;
         let merged = success.merge.is_some();
         // The engine installed a root: the Commit's, or a merge's.
-        let rebased = self.advance(merged).map_err(failed)?;
+        let rebased = self.advance(merged, ledger).map_err(failed)?;
         let Some(history) = success.history else {
             let merge = success.merge.unwrap_or_else(unreachable_merge);
             self.materialize(&merge.written)?;
@@ -274,17 +416,13 @@ impl Workspace {
                 written: merge.written,
             });
         };
-        // Published. Files still open for writing elsewhere stay journaled.
-        let live: Vec<String> = captured
-            .live
-            .iter()
-            .map(|path| path.to_lowercase())
-            .collect();
+        // Published. A file still open for writing is compared again at
+        // the next Commit: the tracker keeps it until the journal shows
+        // its handle closed.
+        self.settle(ledger, &captured);
         provider
             .journal
-            .forget_through(recorded.sequence, &|path| {
-                live.contains(&path.to_lowercase())
-            })
+            .forget_through(recorded.sequence)
             .map_err(failed)?;
         let outcome = match history {
             CommitOutcome::Committed { record, .. } => Outcome::Committed {

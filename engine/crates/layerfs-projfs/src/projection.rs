@@ -1,10 +1,13 @@
 //! One mounted projection of a source into a local directory: start, status,
 //! unmount, discard. The Workspace entry point composes this with the Store.
+use crate::ntfs::Volume;
+use crate::provider::tree::join;
 use crate::provider::Provider;
-use crate::source::Source;
+use crate::source::{attribute, Source};
 use crate::sys;
-use crate::track::local::{verbatim, Local};
-use crate::track::status::{self, Change, StatusError};
+use crate::track::local::{native, verbatim, Local};
+use crate::track::status::{self, Change, Known, Report, StatusError};
+use crate::track::watch::{self, Dirty, Pending, Position, Watch};
 use crate::track::Journal;
 use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
@@ -27,8 +30,11 @@ pub enum MountError {
         error: std::io::Error,
     },
     ProjFs(sys::Error),
-    /// The scan of the local disk before a resume failed.
-    Scan(String),
+    /// The volume's change journal cannot be read, so changes cannot be
+    /// tracked.
+    Journal(String),
+    /// The state directory belongs to another directory than the one given.
+    WrongRoot(PathBuf),
 }
 
 impl std::fmt::Display for MountError {
@@ -44,7 +50,12 @@ impl std::fmt::Display for MountError {
                 write!(f, "Failed: {what} {}: {error}", path.display())
             }
             Self::ProjFs(error) => write!(f, "Failed: {error}"),
-            Self::Scan(text) => write!(f, "Failed: scan of the local disk: {text}"),
+            Self::Journal(text) => write!(f, "Unsupported: {text}"),
+            Self::WrongRoot(path) => write!(
+                f,
+                "InvalidInput: the state directory is not the one of {}",
+                path.display()
+            ),
         }
     }
 }
@@ -119,12 +130,56 @@ fn clear_read_only(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// What a state directory records about its mount's place on the volume:
+/// which directory it belongs to, and the change journal position every
+/// uncommitted change lies after.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Anchor {
+    volume: u32,
+    directory: u64,
+    position: Position,
+}
+
+impl Anchor {
+    fn read(state: &Path) -> Option<Self> {
+        let text = std::fs::read_to_string(state.join("anchor")).ok()?;
+        let field = |name: &str| {
+            text.lines()
+                .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
+        };
+        Some(Self {
+            volume: field("volume")?.parse().ok()?,
+            directory: field("directory")?.parse().ok()?,
+            position: Position {
+                journal: field("journal")?.parse().ok()?,
+                usn: field("usn")?.parse().ok()?,
+            },
+        })
+    }
+
+    fn write(&self, state: &Path) -> std::io::Result<()> {
+        // Written beside and renamed in: a torn record would lose the
+        // position every uncommitted change is found from.
+        let (path, beside) = (state.join("anchor"), state.join("anchor.new"));
+        std::fs::write(
+            &beside,
+            format!(
+                "volume={}\ndirectory={}\njournal={}\nusn={}\n",
+                self.volume, self.directory, self.position.journal, self.position.usn
+            ),
+        )?;
+        std::fs::rename(beside, path)
+    }
+}
+
 /// A source projected into a local directory by a running provider.
 pub struct Projection {
     root: PathBuf,
     state: PathBuf,
     provider: Arc<Provider>,
     instance: Option<sys::Instance>,
+    watch: Arc<Watch>,
+    anchor: std::sync::Mutex<Anchor>,
 }
 
 impl Projection {
@@ -152,14 +207,30 @@ impl Projection {
         sys::mark_root(root, instance)?;
         let record = state.join("instance");
         std::fs::write(&record, format!("{instance:032x}\n")).map_err(io("write", &record))?;
-        Self::start(root, state, source, threads)
+        // Tracking starts before anything can change: at the journal's end.
+        let watch = Watch::start(root, None, []).map_err(|e| MountError::Journal(e.to_string()))?;
+        let anchor = Self::anchor(root, watch.pending().1)?;
+        anchor.write(state).map_err(io("write", state))?;
+        Self::start(root, state, source, threads, watch, anchor)
+    }
+
+    fn anchor(root: &Path, position: Position) -> Result<Anchor, MountError> {
+        let own = Volume::open(root)
+            .and_then(|volume| volume.directory())
+            .map_err(io("identify", root))?;
+        Ok(Anchor {
+            volume: own.volume,
+            directory: own.index,
+            position,
+        })
     }
 
     /// Serves again a root a provider stopped serving, by unmount or by
-    /// dying. The items on disk stay as they are and the journal file is
-    /// replayed. Changes made while no provider ran were never reported, so
-    /// the local disk is scanned first, before anything is served; the
-    /// paths it finds join the journal. Returns how many it found.
+    /// dying. The items on disk stay as they are. What changed while no
+    /// provider ran is read from the volume's change journal, from the
+    /// position the state directory records; when the journal no longer
+    /// reaches back that far, everything on disk is compared once. Returns
+    /// how many changed items the journal already shows.
     pub fn resume(
         root: &Path,
         state: &Path,
@@ -170,13 +241,29 @@ impl Projection {
         if !state.join("instance").is_file() || !root.is_dir() {
             return Err(MountError::NoMount(state.to_owned()));
         }
-        let found = status::scan(root, &crate::provider::Tree::new(source.clone()))
-            .map_err(|error| MountError::Scan(error.to_string()))?;
-        let resumed = Self::start(root, state, source, threads)?;
-        found
-            .iter()
-            .for_each(|path| resumed.provider.journal.touch(path));
-        Ok((resumed, found.len()))
+        let anchor = Anchor::read(state).ok_or_else(|| MountError::NoMount(state.to_owned()))?;
+        Self::belongs(root, &anchor)?;
+        // No provider runs yet, so the listing is exactly what is on disk.
+        let known = watch::directories(root).map_err(io("list", root))?;
+        let watch = Watch::start(root, Some(anchor.position), known)
+            .map_err(|e| MountError::Journal(e.to_string()))?;
+        let resumed = Self::start(root, state, source, threads, watch, anchor)?;
+        let (pending, _) = resumed.watch.pending();
+        let found = pending.files.len()
+            + pending.members.len()
+            + pending.attributes.len()
+            + usize::from(pending.everything);
+        Ok((resumed, found))
+    }
+
+    /// Refuses a state directory that records another directory.
+    fn belongs(root: &Path, anchor: &Anchor) -> Result<(), MountError> {
+        let own = Self::anchor(root, anchor.position)?;
+        if (own.volume, own.directory) == (anchor.volume, anchor.directory) {
+            Ok(())
+        } else {
+            Err(MountError::WrongRoot(root.to_owned()))
+        }
     }
 
     fn outside(root: &Path, state: &Path) -> Result<(), MountError> {
@@ -193,6 +280,8 @@ impl Projection {
         state: &Path,
         source: Arc<dyn Source>,
         threads: u32,
+        watch: Arc<Watch>,
+        anchor: Anchor,
     ) -> Result<Self, MountError> {
         let log = state.join("journal.log");
         let journal = Arc::new(Journal::open(&log).map_err(io("open", &log))?);
@@ -203,6 +292,8 @@ impl Projection {
             state: state.to_owned(),
             provider,
             instance: Some(instance),
+            watch,
+            anchor: std::sync::Mutex::new(anchor),
         })
     }
 
@@ -220,17 +311,79 @@ impl Projection {
         self.instance.as_ref().expect("a mounted projection runs")
     }
 
-    /// Journals the files whose read-only attribute was changed: the one
-    /// change ProjFS never reports. Returns how many it found.
-    pub fn sweep(&self) -> Result<usize, StatusError> {
-        let found = {
+    /// The mount's change tracker.
+    pub fn watch(&self) -> &Arc<Watch> {
+        &self.watch
+    }
+
+    /// Records that everything before `position` in the change journal is
+    /// committed: a later provider starts reading there.
+    pub fn settle(&self, position: Position) -> std::io::Result<()> {
+        let mut anchor = self
+            .anchor
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        anchor.position = position;
+        anchor.write(&self.state)
+    }
+
+    /// The paths and listings to compare for `pending`. When the journal
+    /// could not answer, that is everything on disk: every directory's
+    /// names, every placeholder whose read-only bit differs from the
+    /// base's, and every full file `known` does not vouch for.
+    pub fn dirty(&self, pending: &Pending, known: Known<'_>) -> Result<Dirty, StatusError> {
+        let mut dirty = self.watch.examine(&self.root, pending)?;
+        if !pending.everything {
+            return Ok(dirty);
+        }
+        let mut directories = vec![String::new()];
+        {
             let _local = self.provider.local_only();
-            status::attribute_changes(&self.provider, &mut Local::new(&self.root))?
-        };
-        found
-            .iter()
-            .for_each(|path| self.provider.journal.touch(path));
-        Ok(found.len())
+            let mut local = Local::new(&self.root);
+            let mut walk = vec![String::new()];
+            while let Some(directory) = walk.pop() {
+                let base = match self.provider.tree.resolve(&directory)? {
+                    Some(found) if found.is_directory() => {
+                        Some(self.provider.tree.directory(found.path())?)
+                    }
+                    _ => None,
+                };
+                for item in local.list(&directory)?.unwrap_or_default() {
+                    let path = join(&directory, &item.name);
+                    if item.link() {
+                        dirty.paths.insert(path);
+                    } else if item.directory {
+                        walk.push(path.clone());
+                        directories.push(path);
+                    } else if local
+                        .state(&path)?
+                        .is_none_or(|bits| bits & sys::state::FULL != 0)
+                    {
+                        if !known(&path, &item) {
+                            dirty.paths.insert(path);
+                        }
+                    } else if base
+                        .as_ref()
+                        .and_then(|base| base.find(&item.name))
+                        .is_none_or(|entry| {
+                            (entry.attributes ^ item.attributes) & attribute::READ_ONLY != 0
+                        })
+                    {
+                        dirty.paths.insert(path);
+                    }
+                }
+            }
+        }
+        for directory in directories {
+            let native = native(&self.root, &directory);
+            if let Ok(volume) = Volume::open(&native) {
+                self.watch.know(volume.directory()?.index);
+            }
+            if let Some(names) = watch::names(&native)? {
+                dirty.listings.insert(directory, names);
+            }
+        }
+        Ok(dirty)
     }
 
     /// What this mount holds on the local disk now.
@@ -239,23 +392,44 @@ impl Projection {
         status::usage(&mut Local::new(&self.root))
     }
 
-    /// What changed against the source, from the journal's paths.
-    pub fn status(&self) -> Result<Vec<Change>, StatusError> {
-        self.sweep()?;
+    /// What changed against the source, and the links found on the way.
+    /// `known` vouches for full files the caller knows to be the base's.
+    pub fn report(&self, known: Known<'_>) -> Result<Report, StatusError> {
         let recorded = self.provider.journal.recorded();
+        let (pending, _) = self.watch.pending();
+        let dirty = self.dirty(&pending, known)?;
         let _local = self.provider.local_only();
-        status::changes(&self.provider, Local::new(&self.root), &recorded)
+        status::changes(
+            &self.provider,
+            Local::new(&self.root),
+            &recorded,
+            &dirty,
+            known,
+        )
+    }
+
+    /// What changed against the source.
+    pub fn status(&self) -> Result<Vec<Change>, StatusError> {
+        Ok(self.report(&|_, _| false)?.changes)
     }
 
     /// Stops serving. The root, its local items and the state directory
     /// stay, for [`Self::resume`]; nothing is committed or removed.
     pub fn unmount(mut self) {
+        self.watch.stop();
         self.instance = None;
     }
 
     /// Stops serving and removes the root and the state directory: every
     /// uncommitted change is gone.
     pub fn discard(mut self) -> Result<(), MountError> {
+        // Nothing is removed from a directory the state does not belong to.
+        let anchor = *self
+            .anchor
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        Self::belongs(&self.root, &anchor)?;
+        self.watch.stop();
         // Once no provider runs, some items cannot be deleted (a placeholder
         // that was never hydrated, an empty hydrated file: error 369). So
         // the files on disk are removed first, while this provider still

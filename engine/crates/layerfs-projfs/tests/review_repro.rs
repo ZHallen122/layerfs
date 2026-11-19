@@ -110,7 +110,10 @@ fn r2_changes_inside_a_directory_renamed_afterwards_reach_the_commit() {
     let (saved_shape, saved_digests) = fixture.saved("work");
     let (disk_shape, disk_digests) = (shape(&root), tree_digests(&root));
     let only = |map: &std::collections::BTreeMap<String, (bool, u64)>| -> Vec<String> {
-        map.keys().filter(|k| k.starts_with("pkg")).cloned().collect()
+        map.keys()
+            .filter(|k| k.starts_with("pkg"))
+            .cloned()
+            .collect()
     };
     eprintln!(
         "R2 status: {status:?}\nR2 commit 2: {:?}\nR2 on disk: {:?}\nR2 in Store: {:?}",
@@ -294,12 +297,18 @@ fn r4_size_and_time_show_an_in_place_overwrite_by_an_open_writer() {
         results.push((label, before != after));
         drop(writer);
         let closed = stamp(&reader);
-        eprintln!("R4 {label}: stamp changed after the writer closed: {}", before != closed);
+        eprintln!(
+            "R4 {label}: stamp changed after the writer closed: {}",
+            before != closed
+        );
     }
     ws.discard().expect("discard");
     fixture.close();
     for (label, changed) in results {
-        assert!(changed, "{label}: an in-place overwrite left size and time unchanged");
+        assert!(
+            changed,
+            "{label}: an in-place overwrite left size and time unchanged"
+        );
     }
 }
 
@@ -357,7 +366,9 @@ fn r6_status_and_commit_after_the_tree_was_listed() {
     let home = support::Scratch::new("rv-sweep");
     let tree = home.path().join("tree");
     for index in 0..DIRECTORIES {
-        let directory = tree.join(format!("g{:02}", index % 40)).join(format!("d{index:04}"));
+        let directory = tree
+            .join(format!("g{:02}", index % 40))
+            .join(format!("d{index:04}"));
         std::fs::create_dir_all(&directory).expect("directory");
         std::fs::write(directory.join("file.txt"), format!("file {index}\n")).expect("file");
     }
@@ -390,7 +401,10 @@ fn r6_status_and_commit_after_the_tree_was_listed() {
     let edit = |name: &str| {
         ops::run(
             home.path(),
-            &[Op::Write(at(&root, "g00/d0000/file.txt"), name.as_bytes().to_vec())],
+            &[Op::Write(
+                at(&root, "g00/d0000/file.txt"),
+                name.as_bytes().to_vec(),
+            )],
         );
     };
     edit("first edit\n");
@@ -407,9 +421,7 @@ fn r6_status_and_commit_after_the_tree_was_listed() {
         .status()
         .expect("dir");
     assert!(listed.success());
-    eprintln!(
-        "R6 the tree was listed once by another process ({DIRECTORIES} leaf directories)"
-    );
+    eprintln!("R6 the tree was listed once by another process ({DIRECTORIES} leaf directories)");
     edit("second edit\n");
     timed("status, after listing, 1 file changed", &mut || {
         ws.status().expect("status");
@@ -449,7 +461,10 @@ fn r7_a_placeholder_open_for_reading_follows_a_merge() {
     ops::run(
         fixture.home.path(),
         &[
-            Op::Write(first.root().join("README.md"), b"# changed by first\n".to_vec()),
+            Op::Write(
+                first.root().join("README.md"),
+                b"# changed by first\n".to_vec(),
+            ),
             Op::Write(at(second.root(), "src/main.rs"), B2.to_vec()),
         ],
     );
@@ -457,7 +472,10 @@ fn r7_a_placeholder_open_for_reading_follows_a_merge() {
     let merged = second.commit(Some("second")).expect("second");
     assert!(merged.merged);
     let held = reader.try_wait().expect("child").is_none();
-    eprintln!("R7 reader still holds the file: {held}; rebased: {:?}", merged.rebased);
+    eprintln!(
+        "R7 reader still holds the file: {held}; rebased: {:?}",
+        merged.rebased
+    );
     reader.wait().expect("reader");
     let disk = std::fs::read(&readme).expect("read");
     let status = second.status().expect("status").changes;
@@ -534,5 +552,8 @@ fn r8_resume_refuses_a_state_directory_of_another_workspace() {
         b_state.exists()
     );
     fixture.close();
-    assert!(!accepted, "resume served one Workspace's directory with another's state");
+    assert!(
+        !accepted,
+        "resume served one Workspace's directory with another's state"
+    );
 }

@@ -1,5 +1,6 @@
 //! Capture: brings the bound engine Workspace's view to what the local
-//! disk holds at every journaled path, so the existing Commit can publish it.
+//! disk holds at every item the change journal marks, so the existing Commit
+//! can publish it.
 //!
 //! The engine Workspace (its SQLite overlay over the immutable base) is the
 //! Commit's input, exactly as for a FUSE mount. Here NTFS was the live
@@ -13,19 +14,33 @@ use crate::source::{attribute, unix};
 use crate::sys;
 use crate::track::journal::{Recorded, Rename};
 use crate::track::local::{native, Local, LocalItem};
+use crate::track::status::Known;
+use crate::track::watch::Dirty;
 use layerfs_bridge::control::SdkRefusal;
 use layerfs_content::filesystem::PathName;
 use layerfs_content::object::inode_leaf::InodeKind;
 use layerfs_store_service::store::BoundWorkspace;
 use layerfs_store_service::write::mutation::{read_failure, Mutation};
 use layerfs_workspace::{Operation, Time, ViewStat};
-use std::os::windows::fs::{FileExt, OpenOptionsExt};
+use std::os::windows::fs::{FileExt, MetadataExt, OpenOptionsExt};
 use std::path::Path;
 
 /// Bytes one overlay write carries: one engine record at most.
 const PIECE: usize = 32 * 1024;
 const FILE_SHARE_READ: u32 = 1;
+const SHARE_ALL: u32 = 7;
+/// Opens a link itself instead of what it points to.
+const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 const SHARING_VIOLATION: i32 = 32;
+
+/// A full file as it was when the capture read it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Seen {
+    pub path: String,
+    pub size: u64,
+    /// Last write time, in 100 ns ticks since 1601.
+    pub written: i64,
+}
 
 /// What one capture did.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -37,8 +52,16 @@ pub struct Captured {
     /// File bytes written into the Workspace overlay.
     pub bytes_written: u64,
     /// Files another process held open for writing while they were read.
-    /// Their bytes did not change during the read; they stay journaled.
+    /// Their bytes did not change during the read; they are compared again
+    /// at the next Commit.
     pub live: Vec<String>,
+    /// Full files whose bytes the view now holds, as they were when read.
+    pub files: Vec<Seen>,
+    /// Paths removed from the view: deleted, or renamed away.
+    pub removed: Vec<String>,
+    /// Junctions and symbolic links found on disk. They are never followed
+    /// and never committed; the Commit goes on without them.
+    pub links: Vec<String>,
 }
 
 /// Why a capture stopped. Nothing was published.
@@ -162,10 +185,36 @@ pub fn view_find(
     Ok(Some((at, stat)))
 }
 
+/// The names the view's directory `serial` holds, as the view spells them.
+fn view_names(mutation: &Mutation<'_>, serial: u64) -> Result<Vec<String>, SdkRefusal> {
+    let (mut names, mut after) = (Vec::new(), None::<Vec<u8>>);
+    loop {
+        let page = mutation
+            .view
+            .list(mutation.op.overlay(), serial, after.as_deref())
+            .map_err(read_failure)?;
+        names.extend(
+            page.entries
+                .iter()
+                .map(|(bytes, _)| String::from_utf8_lossy(bytes).into_owned()),
+        );
+        match page.continuation {
+            Some(next) => after = Some(next),
+            None => return Ok(names),
+        }
+    }
+}
+
 struct Capture<'a, 'w> {
     mutation: Mutation<'w>,
     local: Local,
     root: &'a Path,
+    dirty: &'a Dirty,
+    known: Known<'a>,
+    /// Paths already compared in this capture, as NTFS compares them: an
+    /// item marked both by its own change and by its directory's is
+    /// looked at once.
+    visited: std::collections::BTreeSet<String>,
     done: Captured,
     refused: Vec<(String, String)>,
 }
@@ -215,6 +264,35 @@ impl Capture<'_, '_> {
         self.ensure_parent(&to)?;
         self.mutation.rename(&absolute(&from), &absolute(&to))?;
         self.done.applied += 1;
+        self.done.removed.push(from);
+        Ok(())
+    }
+
+    /// Compares the names a directory shows now with the names the view
+    /// holds for it: a name only the view has was deleted or renamed away,
+    /// a name only the listing has is new.
+    fn members(&mut self, directory: &str, listed: &[String]) -> Result<(), CaptureError> {
+        let (spelled, held) = match view_find(&self.mutation, directory)? {
+            Some((spelled, stat)) if stat.kind == InodeKind::Directory => {
+                (spelled, view_names(&self.mutation, stat.serial)?)
+            }
+            // Not a directory in the view: its own path decides.
+            _ => return self.path(directory),
+        };
+        for name in &held {
+            let wide = sys::wide(name);
+            let shown = listed
+                .iter()
+                .any(|other| sys::compare(&sys::wide(other), &wide).is_eq());
+            if !shown {
+                self.path(&join(&spelled, name))?;
+            }
+        }
+        for name in listed {
+            if !held.contains(name) {
+                self.path(&join(directory, name))?;
+            }
+        }
         Ok(())
     }
 
@@ -260,6 +338,7 @@ impl Capture<'_, '_> {
                 if let Some((gone, _)) = view_find(&self.mutation, typed)? {
                     self.mutation.remove(&absolute(&gone))?;
                     self.done.applied += 1;
+                    self.done.removed.push(gone);
                 }
                 Ok(())
             }
@@ -267,6 +346,20 @@ impl Capture<'_, '_> {
     }
 
     fn item(&mut self, path: &str, item: &LocalItem) -> Result<(), CaptureError> {
+        if !self.visited.insert(path.to_lowercase()) {
+            return Ok(());
+        }
+        if item.link() {
+            // A junction or symbolic link is never followed and never
+            // stored: it is named, and what the view held there is gone.
+            if let Some((spelled, _)) = view_find(&self.mutation, path)? {
+                self.mutation.remove(&absolute(&spelled))?;
+                self.done.applied += 1;
+                self.done.removed.push(spelled);
+            }
+            self.done.links.push(path.to_owned());
+            return Ok(());
+        }
         if !self.representable(path) {
             return Ok(());
         }
@@ -276,6 +369,7 @@ impl Capture<'_, '_> {
             if folder != item.directory || stat.kind == InodeKind::Symlink {
                 self.mutation.remove(&absolute(&spelled))?;
                 self.done.applied += 1;
+                self.done.removed.push(spelled);
             } else {
                 if spelled != path {
                     // The same name in another case: a case-only rename.
@@ -317,9 +411,14 @@ impl Capture<'_, '_> {
             .local
             .state(path)?
             .is_none_or(|bits| bits & sys::state::FULL != 0);
+        // A full file the record of committed files vouches for is the
+        // view's already, unless it is still open for writing: then its
+        // size and time say nothing.
+        let committed = full && !self.dirty.live.contains(path) && (self.known)(path, item);
         let (serial, mode, changed) = match existing {
             Some(stat) => {
-                let changed = full && self.bytes(path, stat.serial, Some(stat.logical_len))?;
+                let changed =
+                    full && !committed && self.bytes(path, stat.serial, Some(stat.logical_len))?;
                 (stat.serial, stat.metadata.mode, changed)
             }
             None => {
@@ -361,14 +460,17 @@ impl Capture<'_, '_> {
         let native = native(self.root, path);
         // Deny writers for the read. A file someone already writes cannot
         // be opened this way: it is read shared and checked for change.
-        let (file, live) = match std::fs::OpenOptions::new()
-            .read(true)
-            .share_mode(FILE_SHARE_READ)
-            .open(&native)
-        {
+        let open = |share: u32| {
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(share)
+                .custom_flags(OPEN_REPARSE_POINT)
+                .open(&native)
+        };
+        let (file, live) = match open(FILE_SHARE_READ) {
             Ok(file) => (file, false),
             Err(error) if error.raw_os_error() == Some(SHARING_VIOLATION) => {
-                match std::fs::File::open(&native) {
+                match open(SHARE_ALL) {
                     Ok(file) => (file, true),
                     Err(error) if error.raw_os_error() == Some(SHARING_VIOLATION) => {
                         return Err(CaptureError::Locked(path.to_owned()));
@@ -378,9 +480,9 @@ impl Capture<'_, '_> {
             }
             Err(error) => return Err(error.into()),
         };
-        let stamp = |file: &std::fs::File| -> std::io::Result<(u64, std::time::SystemTime)> {
+        let stamp = |file: &std::fs::File| -> std::io::Result<(u64, i64)> {
             let metadata = file.metadata()?;
-            Ok((metadata.len(), metadata.modified()?))
+            Ok((metadata.len(), metadata.last_write_time() as i64))
         };
         let before = stamp(&file)?;
         let length = before.0;
@@ -419,25 +521,38 @@ impl Capture<'_, '_> {
                 return Err(CaptureError::Unstable(path.to_owned()));
             }
             self.done.live.push(path.to_owned());
+        } else {
+            self.done.files.push(Seen {
+                path: path.to_owned(),
+                size: before.0,
+                written: before.1,
+            });
         }
         Ok(changed)
     }
 }
 
-/// Applies every journaled change to the bound Workspace's view. On an
-/// error nothing is published; an uncertain engine outcome keeps the
-/// Workspace's custody untouched.
+/// Applies every change to the bound Workspace's view: the renames and
+/// links ProjFS reported first, so an item keeps its identity, then every
+/// item `dirty` marks, compared between the disk and the view. On an error
+/// nothing is published; an uncertain engine outcome keeps the Workspace's
+/// custody untouched.
 pub fn capture(
     bound: &BoundWorkspace,
     provider: &Provider,
     root: &Path,
     recorded: &Recorded,
+    dirty: &Dirty,
+    known: Known<'_>,
 ) -> Result<Captured, CaptureError> {
     let _local = provider.local_only();
     let mut capture = Capture {
         mutation: Mutation::new(bound)?,
         local: Local::new(root),
         root,
+        dirty,
+        known,
+        visited: std::collections::BTreeSet::new(),
         done: Captured::default(),
         refused: Vec::new(),
     };
@@ -448,7 +563,10 @@ pub fn capture(
         for link in &recorded.links {
             capture.link(&link.path, &link.link)?;
         }
-        for typed in recorded.touched.keys() {
+        for (directory, listed) in &dirty.listings {
+            capture.members(directory, listed)?;
+        }
+        for typed in &dirty.paths {
             capture.path(typed)?;
         }
         Ok(())

@@ -1,10 +1,11 @@
-//! What changed in a mount: the journal's paths, each compared between the
-//! local disk and the projected base. Work follows the number of touched
-//! paths (and the bytes of rewritten files of unchanged length), never the
-//! size of the tree.
+//! What changed in a mount: the paths the change journal marks, each
+//! compared between the local disk and the projected base. Work follows the
+//! number of changed items (and the bytes of rewritten files of unchanged
+//! length). The tree is walked only when the journal could not answer.
 use super::journal::{Recorded, Rename};
 use super::local::{native, Local, LocalItem};
-use crate::provider::tree::{join, Found, Tree};
+use super::watch::Dirty;
+use crate::provider::tree::{join, Found};
 use crate::provider::Provider;
 use crate::source::{attribute, Entry, Source, SourceError};
 use crate::sys;
@@ -142,6 +143,7 @@ fn file_differs(
     source: &dyn Source,
     base_path: &str,
     base: &Entry,
+    committed: bool,
 ) -> Result<bool, StatusError> {
     if (item.attributes ^ base.attributes) & attribute::READ_ONLY != 0 {
         return Ok(true);
@@ -149,10 +151,24 @@ fn file_differs(
     let full = local
         .state(path)?
         .is_some_and(|bits| bits & sys::state::FULL != 0);
-    if !full {
+    if !full || committed {
         return Ok(false);
     }
     bytes_differ(local, path, item, source, base_path, base)
+}
+
+/// Decides whether a full file on disk is exactly what the last Commit
+/// stored at its path, from the Workspace's record of committed files.
+pub type Known<'a> = &'a dyn Fn(&str, &LocalItem) -> bool;
+
+/// What a status found.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Report {
+    /// The changes against the base, sorted by path.
+    pub changes: Vec<Change>,
+    /// Junctions and symbolic links on disk. They are never followed and
+    /// never committed.
+    pub links: Vec<String>,
 }
 
 struct Classifier<'a> {
@@ -160,6 +176,9 @@ struct Classifier<'a> {
     source: std::sync::Arc<dyn Source>,
     local: Local,
     renames: &'a [Rename],
+    dirty: &'a Dirty,
+    known: Known<'a>,
+    links: Vec<String>,
     seen: BTreeSet<String>,
     changes: Vec<Change>,
     deleted: BTreeMap<String, bool>,
@@ -175,6 +194,63 @@ impl Classifier<'_> {
         })
     }
 
+    /// Whether the full file at `path` is what the last Commit stored. A
+    /// file still open for writing is never taken on its size and time.
+    fn committed(&self, path: &str, item: &LocalItem) -> bool {
+        !self.dirty.live.contains(path) && (self.known)(path, item)
+    }
+
+    /// Compares the names a directory shows now with the names its base
+    /// directory holds.
+    fn members(&mut self, directory: &str, listed: &[String]) -> Result<(), StatusError> {
+        let renamed = origin(directory, self.renames);
+        let from = renamed
+            .as_ref()
+            .map_or(directory, |(from, _)| from.as_str());
+        let base = match self.provider.tree.resolve(from)? {
+            Some(found) if found.is_directory() => {
+                Some(self.provider.tree.directory(found.path())?)
+            }
+            _ => None,
+        };
+        if let Some(base) = &base {
+            let base_path = self
+                .provider
+                .tree
+                .resolve(from)?
+                .map(|found| found.path().to_owned())
+                .unwrap_or_default();
+            for item in &base.items {
+                let shown = listed
+                    .iter()
+                    .any(|name| sys::compare(&sys::wide(name), &item.wide).is_eq());
+                if shown {
+                    continue;
+                }
+                if renamed.is_some() {
+                    // Below a renamed directory the old path names nothing
+                    // a reader can find; the loss is told where it is now.
+                    self.changes.push(Change {
+                        path: join(directory, &item.entry.name),
+                        kind: Kind::Deleted,
+                        directory: item.entry.directory,
+                    });
+                } else {
+                    self.deleted
+                        .insert(join(&base_path, &item.entry.name), item.entry.directory);
+                }
+            }
+        }
+        for name in listed {
+            // New to the base, or held by it under another spelling.
+            let held = base.as_ref().and_then(|base| base.find(name));
+            if held.is_none_or(|entry| entry.name != *name) {
+                self.classify(&join(directory, name))?;
+            }
+        }
+        Ok(())
+    }
+
     fn add(&mut self, path: &str, item: &LocalItem) -> Result<(), StatusError> {
         self.changes.push(Change {
             path: path.to_owned(),
@@ -186,7 +262,12 @@ impl Classifier<'_> {
             // children may have arrived with it, unreported one by one.
             for child in self.local.list(path)?.unwrap_or_default() {
                 let child_path = join(path, &child.name);
-                if self.seen.insert(folded(&child_path)) {
+                if !self.seen.insert(folded(&child_path)) {
+                    continue;
+                }
+                if child.link() {
+                    self.links.push(child_path);
+                } else {
                     self.add(&child_path, &child)?;
                 }
             }
@@ -214,6 +295,7 @@ impl Classifier<'_> {
                 self.source.as_ref(),
                 &base_path,
                 &base,
+                false,
             )?;
         match (exact, same) {
             (true, true) => {
@@ -246,6 +328,14 @@ impl Classifier<'_> {
         if !self.seen.insert(folded(&path)) {
             return Ok(());
         }
+        if item.link() {
+            // Never followed: named, and what the base held there is gone.
+            self.links.push(path.clone());
+            if let Some((base_path, base)) = self.base(&path)? {
+                self.deleted.insert(base_path, base.directory);
+            }
+            return Ok(());
+        }
         match self.base(&path)? {
             None => self.unmatched(&path, &item),
             Some((base_path, base)) if base.directory != item.directory => {
@@ -272,6 +362,7 @@ impl Classifier<'_> {
                         self.source.as_ref(),
                         &base_path,
                         &base,
+                        self.committed(&path, &item),
                     )?
                 {
                     self.changes.push(Change {
@@ -286,30 +377,45 @@ impl Classifier<'_> {
     }
 }
 
-/// The mount's changes against its base, sorted by path. The caller holds
-/// the provider's `LocalOnly` guard through `local`'s lifetime.
+/// The mount's changes against its base. `recorded` holds the renames
+/// ProjFS reported, which tell a move from a deletion and an addition;
+/// `dirty` is what the change journal marks. The caller holds the
+/// provider's `LocalOnly` guard through `local`'s lifetime.
 pub fn changes(
     provider: &Provider,
     local: Local,
     recorded: &Recorded,
-) -> Result<Vec<Change>, StatusError> {
+    dirty: &Dirty,
+    known: Known<'_>,
+) -> Result<Report, StatusError> {
     let mut classifier = Classifier {
         provider,
         source: provider.tree.source(),
         local,
         renames: &recorded.renames,
+        dirty,
+        known,
+        links: Vec::new(),
         seen: BTreeSet::new(),
         changes: Vec::new(),
         deleted: BTreeMap::new(),
         moved: BTreeSet::new(),
     };
-    for typed in recorded.touched.keys() {
+    // A renamed item is looked at first: it accounts for its old name.
+    for rename in &recorded.renames {
+        classifier.classify(&rename.to)?;
+    }
+    for (directory, listed) in &dirty.listings {
+        classifier.members(directory, listed)?;
+    }
+    for typed in &dirty.paths {
         classifier.classify(typed)?;
     }
     let Classifier {
         mut changes,
         deleted,
         moved,
+        mut links,
         ..
     } = classifier;
     // A deleted or renamed directory accounts for everything below it.
@@ -332,46 +438,9 @@ pub fn changes(
         }
     }
     changes.sort();
-    Ok(changes)
-}
-
-/// Every path the local disk shows as possibly changed, found without the
-/// journal while no provider serves the root: full or metadata-dirty items,
-/// items the base lacks, and tombstones. With no provider running the file
-/// system lists exactly what is on disk, tombstones included, and asks no
-/// one. Work follows the items on disk, not the whole tree. A rename is
-/// found as a deletion and an addition.
-pub fn scan(root: &std::path::Path, tree: &Tree) -> Result<Vec<String>, StatusError> {
-    let mut local = Local::new(root);
-    let mut found = Vec::new();
-    let mut pending = vec![String::new()];
-    while let Some(directory) = pending.pop() {
-        let base = match tree.resolve(&directory)? {
-            Some(base) if base.is_directory() => Some(tree.directory(base.path())?),
-            _ => None,
-        };
-        for item in local.list(&directory)?.unwrap_or_default() {
-            let path = join(&directory, &item.name);
-            let state = local.state(&path)?.unwrap_or(sys::state::FULL);
-            if state & sys::state::TOMBSTONE != 0 {
-                found.push(path);
-                continue;
-            }
-            let changed = match base.as_ref().and_then(|base| base.find(&item.name)) {
-                None => true,
-                Some(entry) if entry.directory != item.directory => true,
-                Some(_) if item.directory => false,
-                Some(_) => state & (sys::state::FULL | sys::state::DIRTY) != 0,
-            };
-            if changed {
-                found.push(path.clone());
-            }
-            if item.directory {
-                pending.push(path);
-            }
-        }
-    }
-    Ok(found)
+    changes.dedup();
+    links.sort();
+    Ok(Report { changes, links })
 }
 
 /// What a mount holds on the local disk.
@@ -418,40 +487,4 @@ pub fn usage(local: &mut Local) -> Result<Usage, StatusError> {
         }
     }
     Ok(usage)
-}
-
-/// Files on disk whose read-only attribute differs from the base's. ProjFS
-/// reports no notification for an attribute change, so these are found by
-/// listing the directories that are on disk; no file is opened. The caller
-/// holds the provider's `LocalOnly` guard.
-pub fn attribute_changes(
-    provider: &Provider,
-    local: &mut Local,
-) -> Result<Vec<String>, StatusError> {
-    let mut found = Vec::new();
-    let mut pending = vec![String::new()];
-    while let Some(directory) = pending.pop() {
-        let base = match provider.tree.resolve(&directory)? {
-            Some(base) if base.is_directory() => Some(provider.tree.directory(base.path())?),
-            _ => None,
-        };
-        for item in local.list(&directory)?.unwrap_or_default() {
-            let path = join(&directory, &item.name);
-            if item.directory {
-                pending.push(path);
-                continue;
-            }
-            let differs = base
-                .as_ref()
-                .and_then(|base| base.find(&item.name))
-                .is_some_and(|entry| {
-                    !entry.directory
-                        && (entry.attributes ^ item.attributes) & attribute::READ_ONLY != 0
-                });
-            if differs {
-                found.push(path);
-            }
-        }
-    }
-    Ok(found)
 }

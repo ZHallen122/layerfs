@@ -52,18 +52,10 @@ pub mod state {
     pub const TOMBSTONE: i32 = 16;
 }
 
-/// Notifications the provider asks for: every change to a name, to file
-/// data or to links. Opens and unmodified closes are not requested.
-pub const NOTIFICATIONS: u32 = prj::PRJ_NOTIFY_NEW_FILE_CREATED
-    | prj::PRJ_NOTIFY_FILE_OVERWRITTEN
-    | prj::PRJ_NOTIFY_PRE_DELETE
-    | prj::PRJ_NOTIFY_PRE_RENAME
-    | prj::PRJ_NOTIFY_PRE_SET_HARDLINK
-    | prj::PRJ_NOTIFY_FILE_RENAMED
-    | prj::PRJ_NOTIFY_HARDLINK_CREATED
-    | prj::PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_MODIFIED
-    | prj::PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_DELETED
-    | prj::PRJ_NOTIFY_FILE_PRE_CONVERT_TO_FULL;
+/// Notifications the provider asks for: a rename and a new hard link, the
+/// two changes whose old and new names only ProjFS can pair. Which items
+/// changed is read from the volume's change journal instead.
+pub const NOTIFICATIONS: u32 = prj::PRJ_NOTIFY_FILE_RENAMED | prj::PRJ_NOTIFY_HARDLINK_CREATED;
 
 /// Flags for [`Instance::delete_item`] and [`Instance::update_item`].
 pub const ALLOW_DIRTY_METADATA: i32 = prj::PRJ_UPDATE_ALLOW_DIRTY_METADATA;

@@ -2,13 +2,16 @@
 //! directory. Mount, status, Commit, unmount and discard mirror the SDK's
 //! Workspace operations; the mount is a ProjFS projection instead of a FUSE
 //! mount inside a Sandbox, and needs no container.
+use super::ledger::Ledger;
 use super::record::Record;
 use crate::projection::{MountError, Projection};
 use crate::source::snapshot::SnapshotSource;
 use crate::store::{Engine, EngineError};
+use crate::track::local::LocalItem;
 use crate::track::status::{Change, StatusError};
+use layerfs_content::ObjectId;
 use layerfs_history::{BranchRecord, LayerStackRecord};
-use layerfs_store_service::history::lookup::hex;
+use layerfs_store_service::history::lookup::{hex, unhex};
 use layerfs_store_service::store::BoundWorkspace;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -85,8 +88,14 @@ pub struct Status {
     pub root: String,
     /// Uncommitted changes, sorted by path.
     pub changes: Vec<Change>,
-    /// Base paths the mount cannot show, each with the reason.
+    /// Paths the mount cannot show or cannot commit, each with the
+    /// reason: base names Windows cannot project, and junctions or symbolic
+    /// links on disk, which are never followed.
     pub hidden: Vec<(String, &'static str)>,
+    /// Set when the Branch moved while no provider served this Workspace:
+    /// the recorded base and the Branch's present head. The directory still
+    /// shows the recorded base, and Commit is refused.
+    pub diverged: Option<(String, String)>,
 }
 
 /// The default state directory of a mount at `root`.
@@ -105,6 +114,11 @@ pub struct Workspace {
     pub(super) projection: Projection,
     /// One Commit at a time, as the engine requires of a Workspace.
     pub(super) committing: Mutex<()>,
+    /// What each full file on disk was last committed as.
+    pub(super) ledger: Mutex<Ledger>,
+    /// The recorded base Commit and the Branch's present head, when a
+    /// restart found them different.
+    pub(super) diverged: Option<(String, String)>,
 }
 
 impl Workspace {
@@ -130,15 +144,21 @@ impl Workspace {
         let state = request
             .state
             .map_or_else(|| default_state(request.root), Path::to_owned);
-        Self::start(engine, stack, &branch, |source| {
+        Self::start(engine, stack, &branch, None, |source| {
             Projection::mount(request.root, &state, source, request.threads)
         })
     }
 
     /// Serves again a Workspace directory whose provider stopped (by
-    /// unmount, or by dying): the local files stay as they were, and the
-    /// Branch is bound at its present head. Returns the Workspace and how
-    /// many changed paths a scan of the local disk found.
+    /// unmount, or by dying): the local files stay as they were. Returns
+    /// the Workspace and how many uncommitted changes it has.
+    ///
+    /// The engine binds a Workspace only at its Branch's present head. When
+    /// the head is still the recorded one, nothing was lost. When the
+    /// Branch moved meanwhile, the merge base is gone: the directory keeps
+    /// showing the recorded base, status is told against it, and Commit is
+    /// refused, because it could not tell this Workspace's changes from
+    /// the Branch's and would undo them.
     pub fn resume(
         engine: &Arc<Engine>,
         root: &Path,
@@ -149,16 +169,10 @@ impl Workspace {
         let record = Record::read(&state).map_err(WorkspaceError::Failed)?;
         let stack = engine.project(&record.project)?;
         let branch = engine.branch(&stack, &record.branch)?;
-        let mut found = 0;
-        let workspace = Self::start(engine, stack, &branch, |source| {
-            let (projection, changed) = Projection::resume(root, &state, source, threads)?;
-            found = changed;
-            Ok(projection)
+        let workspace = Self::start(engine, stack, &branch, Some(&record), |source| {
+            Ok(Projection::resume(root, &state, source, threads)?.0)
         })?;
-        if workspace.root_text()? != record.root {
-            // The Branch moved while nothing served the directory.
-            workspace.rebase_from(&record.root)?;
-        }
+        let found = workspace.status()?.changes.len();
         Ok((workspace, found))
     }
 
@@ -166,16 +180,31 @@ impl Workspace {
         engine: &Arc<Engine>,
         stack: LayerStackRecord,
         branch: &BranchRecord,
+        resumed: Option<&Record>,
         project: impl FnOnce(Arc<SnapshotSource>) -> Result<Projection, MountError>,
     ) -> Result<Self, WorkspaceError> {
         let bound = engine.bind(branch)?;
+        let mut diverged = None;
         let mounted = (|| {
             let snapshot = bound
                 .snapshot()
                 .map_err(|e| WorkspaceError::Failed(format!("binding: {e}")))?;
-            let source =
-                SnapshotSource::open(engine.store(), snapshot.scope, snapshot.effective_root)
-                    .map_err(|e| WorkspaceError::Failed(format!("base tree: {e}")))?;
+            let head = snapshot
+                .branch
+                .head_commit
+                .map(|id| hex(id.as_slice()))
+                .unwrap_or_default();
+            let mut root = snapshot.effective_root;
+            if let Some(record) = resumed.filter(|record| record.head != head) {
+                // The directory was projected from the recorded base and
+                // keeps showing it.
+                root = unhex(&record.root)
+                    .and_then(|bytes| ObjectId::from_bytes(&bytes).ok())
+                    .ok_or_else(|| WorkspaceError::Failed("recorded base root".to_owned()))?;
+                diverged = Some((record.head.clone(), head));
+            }
+            let source = SnapshotSource::open(engine.store(), snapshot.scope, root)
+                .map_err(|e| WorkspaceError::Failed(format!("base tree: {e}")))?;
             Ok(project(Arc::new(source))?)
         })();
         let projection = match mounted {
@@ -188,6 +217,10 @@ impl Workspace {
                 });
             }
         };
+        let ledger = match resumed {
+            Some(_) => Ledger::load(projection.state()),
+            None => Ledger::default(),
+        };
         let workspace = Self {
             engine: engine.clone(),
             stack,
@@ -195,8 +228,12 @@ impl Workspace {
             bound,
             projection,
             committing: Mutex::new(()),
+            ledger: Mutex::new(ledger),
+            diverged,
         };
-        workspace.write_record()?;
+        if workspace.diverged.is_none() {
+            workspace.write_record()?;
+        }
         Ok(workspace)
     }
 
@@ -211,13 +248,6 @@ impl Workspace {
     /// The projection, for its served-request counters.
     pub fn projection(&self) -> &Projection {
         &self.projection
-    }
-
-    pub(super) fn root_text(&self) -> Result<String, WorkspaceError> {
-        self.bound
-            .snapshot()
-            .map(|snapshot| hex(snapshot.effective_root.as_bytes()))
-            .map_err(|e| WorkspaceError::Failed(format!("binding: {e}")))
     }
 
     pub(super) fn write_record(&self) -> Result<(), WorkspaceError> {
@@ -245,12 +275,28 @@ impl Workspace {
             .bound
             .snapshot()
             .map_err(|e| WorkspaceError::Failed(format!("binding: {e}")))?;
+        let report = {
+            let ledger = self
+                .ledger
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            self.projection
+                .report(&|path: &str, item: &LocalItem| ledger.vouches(path, item))?
+        };
+        let mut hidden = self.projection.provider().tree.hidden();
+        hidden.extend(report.links.into_iter().map(|path| {
+            (
+                path,
+                "a junction or symbolic link: never followed, not committed",
+            )
+        }));
         Ok(Status {
             branch: self.branch.clone(),
             head: snapshot.branch.head_commit.map(|id| hex(id.as_slice())),
             root: hex(snapshot.effective_root.as_bytes()),
-            changes: self.projection.status()?,
-            hidden: self.projection.provider().tree.hidden(),
+            changes: report.changes,
+            hidden,
+            diverged: self.diverged.clone(),
         })
     }
 

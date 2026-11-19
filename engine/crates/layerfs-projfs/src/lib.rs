@@ -7,6 +7,7 @@
 #![deny(unsafe_code)]
 
 pub mod cli;
+pub mod ntfs;
 pub mod projection;
 pub mod provider;
 pub mod source;

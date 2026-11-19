@@ -30,8 +30,9 @@ UNSAFE_AUDITED_MODULE = {
     "layerfs-overlay": ("src/database/windows_identity.rs",),
     "layerfs-node": ("src/discovery.rs", "src/discovery_windows.rs"),
     "layerfs-store-service": ("src/windows_acl.rs",),
-    # The #454 Windows ProjFS reference prototype: the ProjFS library's FFI.
-    "layerfs-projfs": ("src/sys.rs",),
+    # The #454 Windows ProjFS reference prototype: the ProjFS library's FFI,
+    # and the NTFS change journal and open-by-identity calls.
+    "layerfs-projfs": ("src/sys.rs", "src/ntfs.rs"),
 }
 UNSAFE_FREE_CRATES = (
     "layerfs-content",

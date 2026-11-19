@@ -1,6 +1,7 @@
 //! The prototype's entry point: a LayerFS Workspace as a local directory.
 pub mod capture;
 pub mod commit;
+pub mod ledger;
 pub mod mount;
 pub mod record;
 

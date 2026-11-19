@@ -18,6 +18,15 @@ pub struct LocalItem {
     pub attributes: u32,
 }
 
+impl LocalItem {
+    /// Whether this is a junction, a symbolic link or another reparse point
+    /// an application made. ProjFS's own are hidden from every process, so
+    /// a placeholder never shows as one.
+    pub fn link(&self) -> bool {
+        self.attributes & crate::ntfs::attribute::REPARSE_POINT != 0
+    }
+}
+
 struct Listed {
     wide: Vec<u16>,
     item: LocalItem,
