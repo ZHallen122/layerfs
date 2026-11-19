@@ -8,13 +8,13 @@
 //! the local disk and the Workspace view and the difference is applied to
 //! the view through the engine's own mutation operations. The step is
 //! idempotent: a path whose view already equals the disk costs a compare.
+use crate::ntfs;
 use crate::provider::tree::{join, names};
 use crate::provider::Provider;
 use crate::source::{attribute, unix};
 use crate::sys;
 use crate::track::journal::{Recorded, Rename};
 use crate::track::local::{native, Local, LocalItem};
-use crate::track::status::Known;
 use crate::track::watch::Dirty;
 use layerfs_bridge::control::SdkRefusal;
 use layerfs_content::filesystem::PathName;
@@ -40,6 +40,9 @@ pub struct Seen {
     pub size: u64,
     /// Last write time, in 100 ns ticks since 1601.
     pub written: i64,
+    /// The number of the file's newest change journal record: it moves
+    /// with every later change, whatever the size and time say.
+    pub change: i64,
 }
 
 /// What one capture did.
@@ -209,8 +212,6 @@ struct Capture<'a, 'w> {
     mutation: Mutation<'w>,
     local: Local,
     root: &'a Path,
-    dirty: &'a Dirty,
-    known: Known<'a>,
     /// Paths already compared in this capture, as NTFS compares them: an
     /// item marked both by its own change and by its directory's is
     /// looked at once.
@@ -411,14 +412,9 @@ impl Capture<'_, '_> {
             .local
             .state(path)?
             .is_none_or(|bits| bits & sys::state::FULL != 0);
-        // A full file the record of committed files vouches for is the
-        // view's already, unless it is still open for writing: then its
-        // size and time say nothing.
-        let committed = full && !self.dirty.live.contains(path) && (self.known)(path, item);
         let (serial, mode, changed) = match existing {
             Some(stat) => {
-                let changed =
-                    full && !committed && self.bytes(path, stat.serial, Some(stat.logical_len))?;
+                let changed = full && self.bytes(path, stat.serial, Some(stat.logical_len))?;
                 (stat.serial, stat.metadata.mode, changed)
             }
             None => {
@@ -485,6 +481,8 @@ impl Capture<'_, '_> {
             Ok((metadata.len(), metadata.last_write_time() as i64))
         };
         let before = stamp(&file)?;
+        // Read before the bytes: a change made during the read moves it on.
+        let change = ntfs::last_change(&file);
         let length = before.0;
         let same_length = held == Some(length);
         let (mut buffer, mut offset, mut changed) = (vec![0u8; PIECE], 0u64, false);
@@ -521,11 +519,12 @@ impl Capture<'_, '_> {
                 return Err(CaptureError::Unstable(path.to_owned()));
             }
             self.done.live.push(path.to_owned());
-        } else {
+        } else if let Ok(change) = change {
             self.done.files.push(Seen {
                 path: path.to_owned(),
                 size: before.0,
                 written: before.1,
+                change,
             });
         }
         Ok(changed)
@@ -543,15 +542,12 @@ pub fn capture(
     root: &Path,
     recorded: &Recorded,
     dirty: &Dirty,
-    known: Known<'_>,
 ) -> Result<Captured, CaptureError> {
     let _local = provider.local_only();
     let mut capture = Capture {
         mutation: Mutation::new(bound)?,
         local: Local::new(root),
         root,
-        dirty,
-        known,
         visited: std::collections::BTreeSet::new(),
         done: Captured::default(),
         refused: Vec::new(),

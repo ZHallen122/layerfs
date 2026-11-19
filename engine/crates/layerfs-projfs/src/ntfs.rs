@@ -22,8 +22,8 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_DESCRIPTOR, FILE_ID_DESCRIPTOR_0,
 };
 use windows_sys::Win32::System::Ioctl::{
-    FSCTL_QUERY_USN_JOURNAL, FSCTL_READ_UNPRIVILEGED_USN_JOURNAL, READ_USN_JOURNAL_DATA_V1,
-    USN_JOURNAL_DATA_V0, USN_RECORD_V2,
+    FSCTL_QUERY_USN_JOURNAL, FSCTL_READ_FILE_USN_DATA, FSCTL_READ_UNPRIVILEGED_USN_JOURNAL,
+    READ_USN_JOURNAL_DATA_V1, USN_JOURNAL_DATA_V0, USN_RECORD_V2,
 };
 use windows_sys::Win32::System::IO::DeviceIoControl;
 
@@ -119,6 +119,41 @@ fn journal_error(error: std::io::Error) -> JournalError {
         ) => JournalError::Lost(error.to_string()),
         _ => JournalError::Io(error),
     }
+}
+
+/// The number of the newest change journal record of `file`. Every
+/// journaled change to the file gives it a new, larger number, so an equal
+/// number means the file has not changed since, whatever its size and time
+/// say: a write through a mapped view moves neither.
+pub fn last_change(file: &std::fs::File) -> std::io::Result<i64> {
+    // A record with the longest name NTFS allows, 8-byte aligned.
+    let mut output = [0u64; 96];
+    let mut returned = 0u32;
+    // SAFETY: the handle is open for the borrow's duration and `output` is
+    // writable for the size passed.
+    let done = unsafe {
+        DeviceIoControl(
+            file.as_raw_handle() as HANDLE,
+            FSCTL_READ_FILE_USN_DATA,
+            std::ptr::null(),
+            0,
+            output.as_mut_ptr().cast(),
+            std::mem::size_of_val(&output) as u32,
+            &mut returned,
+            std::ptr::null_mut(),
+        )
+    };
+    if done == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: the call wrote a record of at least the fixed part.
+    let record = unsafe { &*output.as_ptr().cast::<USN_RECORD_V2>() };
+    if record.MajorVersion != 2
+        || (returned as usize) < std::mem::offset_of!(USN_RECORD_V2, FileName)
+    {
+        return Err(std::io::Error::other("a record of an unexpected shape"));
+    }
+    Ok(record.Usn)
 }
 
 /// A handle on the volume a directory is on, for its journal and its files.

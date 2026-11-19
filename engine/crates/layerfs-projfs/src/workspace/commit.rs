@@ -139,7 +139,9 @@ fn rebase(
         let unchanged = local
             .find(&path)
             .map_err(|e| wrap(&e))?
-            .is_some_and(|(_, item)| !item.directory && ledger_matches(&stored, &item));
+            .is_some_and(|(spelled, item)| {
+                !item.directory && stored.is(&native(projection.root(), &spelled), &item)
+            });
         if !unchanged {
             continue;
         }
@@ -210,10 +212,6 @@ fn rebase(
     Ok(rebased)
 }
 
-fn ledger_matches(stored: &Stored, item: &LocalItem) -> bool {
-    stored.size == item.size && stored.written == item.written
-}
-
 impl Workspace {
     pub(super) fn source_at(&self, root: ObjectId) -> Result<Arc<SnapshotSource>, WorkspaceError> {
         SnapshotSource::open(self.engine.store(), self.stack.scope, root)
@@ -274,6 +272,7 @@ impl Workspace {
                         Stored {
                             size: seen.size,
                             written: seen.written,
+                            change: seen.change,
                             content: entry.content,
                         },
                     );
@@ -370,7 +369,9 @@ impl Workspace {
     ) -> Result<Committed, CommitRefusal> {
         let provider = self.projection.provider();
         let captured = {
-            let known = |path: &str, item: &LocalItem| ledger.vouches(path, item);
+            let root = self.projection.root();
+            let known =
+                |path: &str, item: &LocalItem| ledger.vouches(&native(root, path), path, item);
             let dirty = self
                 .projection
                 .dirty(pending, &known)
@@ -381,7 +382,6 @@ impl Workspace {
                 self.projection.root(),
                 recorded,
                 &dirty,
-                &known,
             )
             .map_err(CommitRefusal::Capture)?
         };

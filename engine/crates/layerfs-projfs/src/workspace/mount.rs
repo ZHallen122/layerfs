@@ -280,8 +280,10 @@ impl Workspace {
                 .ledger
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner());
-            self.projection
-                .report(&|path: &str, item: &LocalItem| ledger.vouches(path, item))?
+            let root = self.projection.root();
+            self.projection.report(&|path: &str, item: &LocalItem| {
+                ledger.vouches(&crate::track::local::native(root, path), path, item)
+            })?
         };
         let mut hidden = self.projection.provider().tree.hidden();
         hidden.extend(report.links.into_iter().map(|path| {

@@ -143,7 +143,6 @@ fn file_differs(
     source: &dyn Source,
     base_path: &str,
     base: &Entry,
-    committed: bool,
 ) -> Result<bool, StatusError> {
     if (item.attributes ^ base.attributes) & attribute::READ_ONLY != 0 {
         return Ok(true);
@@ -151,14 +150,16 @@ fn file_differs(
     let full = local
         .state(path)?
         .is_some_and(|bits| bits & sys::state::FULL != 0);
-    if !full || committed {
+    if !full {
         return Ok(false);
     }
     bytes_differ(local, path, item, source, base_path, base)
 }
 
 /// Decides whether a full file on disk is exactly what the last Commit
-/// stored at its path, from the Workspace's record of committed files.
+/// stored at its path, from the Workspace's record of committed files. It
+/// is asked only where the change journal could not answer: a file the
+/// journal marks is always compared.
 pub type Known<'a> = &'a dyn Fn(&str, &LocalItem) -> bool;
 
 /// What a status found.
@@ -176,8 +177,6 @@ struct Classifier<'a> {
     source: std::sync::Arc<dyn Source>,
     local: Local,
     renames: &'a [Rename],
-    dirty: &'a Dirty,
-    known: Known<'a>,
     links: Vec<String>,
     seen: BTreeSet<String>,
     changes: Vec<Change>,
@@ -192,12 +191,6 @@ impl Classifier<'_> {
             Some(Found::Entry { path, entry }) => Some((path, entry)),
             _ => None,
         })
-    }
-
-    /// Whether the full file at `path` is what the last Commit stored. A
-    /// file still open for writing is never taken on its size and time.
-    fn committed(&self, path: &str, item: &LocalItem) -> bool {
-        !self.dirty.live.contains(path) && (self.known)(path, item)
     }
 
     /// Compares the names a directory shows now with the names its base
@@ -295,7 +288,6 @@ impl Classifier<'_> {
                 self.source.as_ref(),
                 &base_path,
                 &base,
-                false,
             )?;
         match (exact, same) {
             (true, true) => {
@@ -362,7 +354,6 @@ impl Classifier<'_> {
                         self.source.as_ref(),
                         &base_path,
                         &base,
-                        self.committed(&path, &item),
                     )?
                 {
                     self.changes.push(Change {
@@ -386,15 +377,12 @@ pub fn changes(
     local: Local,
     recorded: &Recorded,
     dirty: &Dirty,
-    known: Known<'_>,
 ) -> Result<Report, StatusError> {
     let mut classifier = Classifier {
         provider,
         source: provider.tree.source(),
         local,
         renames: &recorded.renames,
-        dirty,
-        known,
         links: Vec::new(),
         seen: BTreeSet::new(),
         changes: Vec::new(),

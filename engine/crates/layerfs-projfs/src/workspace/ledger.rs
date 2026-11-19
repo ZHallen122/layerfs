@@ -6,10 +6,16 @@
 //! a record, a full file is forever "possibly changed": it has to be read
 //! and compared at every question, it cannot follow the Branch when a merge
 //! changes it, and after a restart it looks like an uncommitted change. The
-//! record holds, for each such file, the size and time it had when the
-//! Commit read it and the identity of the content the Store then held at
-//! its path. A file whose size and time are still those is the committed
-//! one, as Git's index decides it.
+//! record holds, for each such file, the size, the time and the number of
+//! its newest change journal record when the Commit read it, and the
+//! identity of the content the Store then held at its path. A file for
+//! which all three are still the same is the committed one. The journal
+//! number is what makes that exact: every journaled change moves it, also
+//! one that leaves size and time alone.
+//!
+//! The record is asked only where the change journal cannot answer for a
+//! stretch of time, and when a merge has to decide whether a committed
+//! file may be replaced. A file the journal marks is always compared.
 //!
 //! A tombstone is recorded only when it could not be cleared after its
 //! deletion was committed, so that it is cleared when the name comes back.
@@ -26,6 +32,8 @@ pub struct Stored {
     pub size: u64,
     /// Last write time, in 100 ns ticks since 1601.
     pub written: i64,
+    /// The number of the file's newest change journal record.
+    pub change: i64,
     /// The Store's identity of the bytes.
     pub content: Vec<u8>,
 }
@@ -56,6 +64,17 @@ fn unhex(text: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+impl Stored {
+    /// Whether the file at `native`, listed as `item`, is still this one.
+    pub fn is(&self, native: &Path, item: &LocalItem) -> bool {
+        self.size == item.size
+            && self.written == item.written
+            && std::fs::File::open(native)
+                .and_then(|file| crate::ntfs::last_change(&file))
+                .is_ok_and(|change| change == self.change)
+    }
+}
+
 impl Ledger {
     /// Reads the record in `state`; an absent or unreadable one is empty.
     pub fn load(state: &Path) -> Self {
@@ -64,13 +83,14 @@ impl Ledger {
             return ledger;
         };
         for line in text.lines() {
-            let fields: Vec<&str> = line.splitn(5, '\t').collect();
+            let fields: Vec<&str> = line.splitn(6, '\t').collect();
             match fields.as_slice() {
-                ["F", size, written, content, path] => {
+                ["F", size, written, change, content, path] => {
                     let stored = (|| {
                         Some(Stored {
                             size: size.parse().ok()?,
                             written: written.parse().ok()?,
+                            change: change.parse().ok()?,
                             content: unhex(content)?,
                         })
                     })();
@@ -92,9 +112,10 @@ impl Ledger {
         let mut text = String::new();
         for (path, stored) in self.files.values() {
             text.push_str(&format!(
-                "F\t{}\t{}\t{}\t{path}\n",
+                "F\t{}\t{}\t{}\t{}\t{path}\n",
                 stored.size,
                 stored.written,
+                stored.change,
                 hex(&stored.content)
             ));
         }
@@ -106,12 +127,16 @@ impl Ledger {
         std::fs::rename(beside, path)
     }
 
-    /// Whether the full file `item` at `path` is the one last committed
-    /// there: the same size and time.
-    pub fn vouches(&self, path: &str, item: &LocalItem) -> bool {
-        self.files
-            .get(&folded(path))
-            .is_some_and(|(_, stored)| stored.size == item.size && stored.written == item.written)
+    /// What the file at `path` was last committed as.
+    pub fn stored(&self, path: &str) -> Option<&Stored> {
+        self.files.get(&folded(path)).map(|(_, stored)| stored)
+    }
+
+    /// Whether the full file `item` at `path`, read from the disk at
+    /// `native`, is the one last committed there.
+    pub fn vouches(&self, native: &Path, path: &str, item: &LocalItem) -> bool {
+        self.stored(path)
+            .is_some_and(|stored| stored.is(native, item))
     }
 
     pub fn record(&mut self, path: &str, stored: Stored) {

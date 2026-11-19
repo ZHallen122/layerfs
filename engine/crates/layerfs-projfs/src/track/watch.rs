@@ -46,8 +46,6 @@ pub struct Pending {
     /// Directories that arrived whole, with content the journal did not
     /// attribute to the root.
     pub adopted: BTreeSet<u64>,
-    /// Files changed through a handle the journal has not shown closed.
-    pub open: BTreeSet<u64>,
     /// The journal could not answer for some of the time: everything on
     /// disk is suspect.
     pub everything: bool,
@@ -67,7 +65,6 @@ impl Pending {
         self.members.extend(other.members);
         self.attributes.extend(other.attributes);
         self.adopted.extend(other.adopted);
-        self.open.extend(other.open);
         self.everything |= other.everything;
     }
 }
@@ -82,9 +79,6 @@ pub struct Dirty {
     /// shows now. A name the base holds and the listing lacks was deleted
     /// or renamed away; a name the listing has and the base lacks is new.
     pub listings: BTreeMap<String, Vec<String>>,
-    /// The paths among `paths` whose file is still open for writing: its
-    /// size and time say nothing about its bytes.
-    pub live: BTreeSet<String>,
 }
 
 struct State {
@@ -277,7 +271,6 @@ impl Watch {
         self.advance();
         let state = self.lock();
         let mut pending = state.pending.clone();
-        pending.open = state.open.iter().copied().collect();
         pending.files.extend(state.open.iter().copied());
         (
             pending,
@@ -295,7 +288,6 @@ impl Watch {
         self.advance();
         let mut state = self.lock();
         let mut pending = std::mem::take(&mut state.pending);
-        pending.open = state.open.iter().copied().collect();
         pending.files.extend(state.open.iter().copied());
         (
             pending,
@@ -335,9 +327,6 @@ impl Watch {
         let mut dirty = Dirty::default();
         for id in pending.files.iter().chain(&pending.attributes) {
             if let Some(path) = self.resolve(*id)?.filter(|path| !path.is_empty()) {
-                if pending.open.contains(id) {
-                    dirty.live.insert(path.clone());
-                }
                 dirty.paths.insert(path);
             }
         }

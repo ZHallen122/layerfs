@@ -399,13 +399,7 @@ impl Projection {
         let (pending, _) = self.watch.pending();
         let dirty = self.dirty(&pending, known)?;
         let _local = self.provider.local_only();
-        status::changes(
-            &self.provider,
-            Local::new(&self.root),
-            &recorded,
-            &dirty,
-            known,
-        )
+        status::changes(&self.provider, Local::new(&self.root), &recorded, &dirty)
     }
 
     /// What changed against the source.
