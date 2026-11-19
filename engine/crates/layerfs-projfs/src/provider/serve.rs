@@ -5,7 +5,7 @@ use crate::source::{attribute, Entry, Source, SourceError};
 use crate::sys::{self, BasicInfo, Fill, Handler, Hresult, Notification, Placeholder};
 use crate::track::journal::Journal;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Requests served since the provider started.
@@ -35,9 +35,10 @@ pub struct Provider {
     pub tree: Tree,
     pub journal: Arc<Journal>,
     sessions: Mutex<HashMap<u128, Session>>,
-    /// While set, requests from the provider's own process see only what is
-    /// on the local disk: no projected entry is listed or materialized.
-    local_only: AtomicBool,
+    /// While above zero, requests from the provider's own process see only
+    /// what is on the local disk: no projected entry is listed or
+    /// materialized. A count, so that two callers do not end each other's.
+    local_only: AtomicUsize,
     enumerations: AtomicU64,
     placeholders: AtomicU64,
     reads: AtomicU64,
@@ -52,7 +53,7 @@ pub struct LocalOnly<'a>(&'a Provider);
 
 impl Drop for LocalOnly<'_> {
     fn drop(&mut self) {
-        self.0.local_only.store(false, Ordering::Release);
+        self.0.local_only.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
@@ -76,7 +77,7 @@ impl Provider {
             tree: Tree::new(source),
             journal,
             sessions: Mutex::new(HashMap::new()),
-            local_only: AtomicBool::new(false),
+            local_only: AtomicUsize::new(0),
             enumerations: AtomicU64::new(0),
             placeholders: AtomicU64::new(0),
             reads: AtomicU64::new(0),
@@ -106,12 +107,12 @@ impl Provider {
     /// Shows the provider's own process only the local disk until the
     /// guard drops. Other processes are unaffected.
     pub fn local_only(&self) -> LocalOnly<'_> {
-        self.local_only.store(true, Ordering::Release);
+        self.local_only.fetch_add(1, Ordering::AcqRel);
         LocalOnly(self)
     }
 
     fn hidden_from(&self, own: bool) -> bool {
-        own && self.local_only.load(Ordering::Acquire)
+        own && self.local_only.load(Ordering::Acquire) > 0
     }
 
     pub fn served(&self) -> Served {

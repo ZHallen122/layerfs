@@ -58,6 +58,10 @@ pub struct Committed {
     pub merged: bool,
     pub captured: Captured,
     pub rebased: Rebased,
+    /// What failed after the Commit was published. The Commit stands; the
+    /// local directory or its records may be behind, and each line says
+    /// what to do.
+    pub warnings: Vec<String>,
 }
 
 /// Why a Commit published nothing.
@@ -346,16 +350,26 @@ impl Workspace {
             .ledger
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        let published = self
-            .publish(message, &recorded, &pending, &mut ledger)
-            .and_then(|committed| {
-                self.projection.settle(position).map_err(failed)?;
-                ledger.save(self.projection.state()).map_err(failed)?;
-                Ok(committed)
-            });
-        if published.is_err() {
+        let mut published = self.publish(message, &recorded, &pending, &mut ledger);
+        match &mut published {
+            // Published: a failure from here on does not undo it, and is
+            // told beside it instead of in its place.
+            Ok(committed) => {
+                if let Err(error) = self.projection.settle(position) {
+                    committed.warnings.push(format!(
+                        "the change journal position was not recorded ({error}): \
+                         after a restart everything on disk is compared once"
+                    ));
+                }
+                if let Err(error) = ledger.save(self.projection.state()) {
+                    committed.warnings.push(format!(
+                        "the record of committed files was not written ({error}): \
+                         after a restart committed files are compared by their bytes"
+                    ));
+                }
+            }
             // Nothing is known to be published: every item stays suspect.
-            self.projection.watch().restore(pending);
+            Err(_) => self.projection.watch().restore(pending),
         }
         published
     }
@@ -405,8 +419,19 @@ impl Workspace {
                 }
             })?;
         let merged = success.merge.is_some();
+        let mut warnings = Vec::new();
         // The engine installed a root: the Commit's, or a merge's.
-        let rebased = self.advance(merged, ledger).map_err(failed)?;
+        let rebased = match self.advance(merged, ledger) {
+            Ok(rebased) => rebased,
+            Err(error) if success.history.is_some() => {
+                warnings.push(format!(
+                    "the directory was not brought to the new base ({error}): \
+                     unmount and resume before the next Commit"
+                ));
+                Rebased::default()
+            }
+            Err(error) => return Err(failed(error)),
+        };
         let Some(history) = success.history else {
             let merge = success.merge.unwrap_or_else(unreachable_merge);
             self.materialize(&merge.written)?;
@@ -420,10 +445,12 @@ impl Workspace {
         // the next Commit: the tracker keeps it until the journal shows
         // its handle closed.
         self.settle(ledger, &captured);
-        provider
-            .journal
-            .forget_through(recorded.sequence)
-            .map_err(failed)?;
+        if let Err(error) = provider.journal.forget_through(recorded.sequence) {
+            warnings.push(format!(
+                "the reported renames were not cleared ({error}): they are replayed, \
+                 and found already done, at the next Commit"
+            ));
+        }
         let outcome = match history {
             CommitOutcome::Committed { record, .. } => Outcome::Committed {
                 commit: hex(record.id.as_slice()),
@@ -439,6 +466,7 @@ impl Workspace {
             merged,
             captured,
             rebased,
+            warnings,
         })
     }
 }

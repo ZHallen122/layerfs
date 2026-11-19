@@ -129,6 +129,11 @@ impl From<SdkRefusal> for CaptureError {
     }
 }
 
+/// Whether a local file was not there when it was opened.
+fn vanished(error: &CaptureError) -> bool {
+    matches!(error, CaptureError::Local(cause) if cause.kind() == std::io::ErrorKind::NotFound)
+}
+
 fn absolute(path: &str) -> String {
     format!("/{path}")
 }
@@ -414,7 +419,17 @@ impl Capture<'_, '_> {
             .is_none_or(|bits| bits & sys::state::FULL != 0);
         let (serial, mode, changed) = match existing {
             Some(stat) => {
-                let changed = full && self.bytes(path, stat.serial, Some(stat.logical_len))?;
+                let changed = match full
+                    .then(|| self.bytes(path, stat.serial, Some(stat.logical_len)))
+                    .transpose()
+                {
+                    Ok(changed) => changed.unwrap_or(false),
+                    // Removed by another process since its directory was
+                    // listed. The change journal has the deletion for the
+                    // next capture; this one goes on.
+                    Err(error) if vanished(&error) => return Ok(()),
+                    Err(error) => return Err(error),
+                };
                 (stat.serial, stat.metadata.mode, changed)
             }
             None => {
@@ -430,7 +445,16 @@ impl Capture<'_, '_> {
                         message: "the created file has no inode".to_owned(),
                         detail: layerfs_bridge::control::SdkValue::Null,
                     })?;
-                self.bytes(path, serial, None)?;
+                match self.bytes(path, serial, None) {
+                    Ok(_) => {}
+                    Err(error) if vanished(&error) => {
+                        // The name was created in the view a moment ago
+                        // for a file that is gone again.
+                        self.mutation.remove(&absolute(path))?;
+                        return Ok(());
+                    }
+                    Err(error) => return Err(error),
+                }
                 (serial, mode, true)
             }
         };

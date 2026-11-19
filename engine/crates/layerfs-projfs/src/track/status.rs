@@ -71,19 +71,36 @@ fn folded(path: &str) -> String {
     path.to_lowercase()
 }
 
+/// What follows `prefix` in `path` when `path` starts with it as NTFS
+/// compares names, cut on `path`'s own characters: lowercasing can change
+/// a name's length in bytes.
+fn below<'a>(path: &'a str, prefix: &str) -> Option<&'a str> {
+    let mut rest = path.char_indices();
+    for wanted in prefix.chars() {
+        let (_, found) = rest.next()?;
+        if !found.to_lowercase().eq(wanted.to_lowercase()) {
+            return None;
+        }
+    }
+    Some(rest.next().map_or("", |(at, _)| &path[at..]))
+}
+
 /// Where the item now at `path` was before the recorded renames, and
 /// whether `path` itself (not a directory above it) was renamed.
 pub fn origin(path: &str, renames: &[Rename]) -> Option<(String, bool)> {
     let (mut at, mut exact, mut moved) = (path.to_owned(), true, false);
     for rename in renames.iter().rev() {
-        let (current, to) = (folded(&at), folded(&rename.to));
-        if current == to {
-            at = rename.from.clone();
-            moved = true;
-        } else if current.starts_with(&format!("{to}/")) {
-            at = format!("{}{}", rename.from, &at[rename.to.len()..]);
-            exact = false;
-            moved = true;
+        match below(&at, &rename.to) {
+            Some("") => {
+                at = rename.from.clone();
+                moved = true;
+            }
+            Some(rest) if rest.starts_with('/') => {
+                at = format!("{}{rest}", rename.from);
+                exact = false;
+                moved = true;
+            }
+            _ => {}
         }
     }
     moved.then_some((at, exact))

@@ -122,4 +122,11 @@ fn init_mount_edit_status_commit_discard() {
     // A command to a mount nobody serves is refused, not hung.
     let (refused, ok) = run(&["status", "--root", text(&root)]);
     assert!(!ok && refused.contains("NotMounted"), "{refused}");
+    // The directory cannot be removed without a provider: one more serves
+    // it, to discard it.
+    let (mut last, _) = serve(&[&["resume"], &store_args[..], &["--root", text(&root)]].concat());
+    let (ended, ok) = run(&["discard", "--root", text(&root)]);
+    assert!(ok && ended.contains("\"ended\":\"discard\""), "{ended}");
+    assert!(last.wait().expect("provider exit").success());
+    assert!(!root.exists(), "the Workspace directory is gone");
 }

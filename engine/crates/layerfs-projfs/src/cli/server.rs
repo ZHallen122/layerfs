@@ -58,6 +58,16 @@ fn status(mounted: &Mounted) -> String {
                     ("root", string(&status.root)),
                     ("changes", json::changes(&status.changes)),
                     ("hidden", format!("[{}]", hidden.join(","))),
+                    (
+                        "diverged",
+                        json::optional(
+                            status
+                                .diverged
+                                .as_ref()
+                                .map(|(recorded, head)| format!("{recorded} -> {head}"))
+                                .as_deref(),
+                        ),
+                    ),
                     ("elapsed_ms", milliseconds(began)),
                 ])
             }
@@ -98,8 +108,17 @@ fn commit(mounted: &Mounted, message: &str) -> String {
                     "live",
                     json::strings(committed.captured.live.iter().map(String::as_str)),
                 ),
+                (
+                    "links",
+                    json::strings(committed.captured.links.iter().map(String::as_str)),
+                ),
                 ("rebased_updated", committed.rebased.updated.to_string()),
                 ("rebased_removed", committed.rebased.removed.to_string()),
+                ("rebased_replaced", committed.rebased.replaced.to_string()),
+                (
+                    "warnings",
+                    json::strings(committed.warnings.iter().map(String::as_str)),
+                ),
                 ("elapsed_ms", milliseconds(began)),
             ])
         }
@@ -200,7 +219,11 @@ fn reply(mut stream: &TcpStream, line: &str) {
 pub fn serve(mounted: Mounted, ready: &[(&str, String)]) -> Result<(), String> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| format!("control: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-    let secret = format!("{:032x}", crate::projection::identity());
+    // Random bytes from the system, not the mount's identity: anything
+    // that can read the state directory may command the mount.
+    let secret = layerfs_bridge::duplex::generate_keypair()
+        .map(|pair| layerfs_store_service::history::lookup::hex(&pair.public))
+        .map_err(|e| format!("control secret: {e}"))?;
     let control = mounted.state().join("control");
     std::fs::write(
         &control,
@@ -218,6 +241,8 @@ pub fn serve(mounted: Mounted, ready: &[(&str, String)]) -> Result<(), String> {
     let mut mounted = Some(mounted);
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
+        // A client that connects and says nothing does not hold the mount.
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
         let mut line = String::new();
         if BufReader::new(&stream).read_line(&mut line).is_err() {
             continue;

@@ -83,17 +83,34 @@ fn milliseconds(since: Instant) -> String {
     format!("{:.3}", since.elapsed().as_secs_f64() * 1000.0)
 }
 
-/// The engine's overlay scratch directory: local, outside every mount.
-fn scratch() -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "layerfs-projfs-overlay-{}-{:016x}",
-        std::process::id(),
-        crate::projection::identity() as u64
-    ))
+/// The engine's overlay scratch directory: local, outside every mount. A
+/// serving mount's is named after its state directory, so that what a
+/// killed provider left there is found and removed by the next one instead
+/// of staying for good. A short command's is its own.
+fn scratch(state: Option<&Path>) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let name = match state {
+        Some(state) => {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            state.to_string_lossy().to_lowercase().hash(&mut hasher);
+            format!("layerfs-projfs-overlay-{:016x}", hasher.finish())
+        }
+        None => format!(
+            "layerfs-projfs-overlay-{}-{:016x}",
+            std::process::id(),
+            crate::projection::identity() as u64
+        ),
+    };
+    std::env::temp_dir().join(name)
 }
 
-fn open(store: &Path) -> Result<Engine, String> {
-    Engine::open(store, &scratch()).map_err(|e| e.to_string())
+fn open(store: &Path, state: Option<&Path>) -> Result<Engine, String> {
+    let scratch = scratch(state);
+    if state.is_some() {
+        // Overlay files of a provider that was killed: disposable.
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+    Engine::open(store, &scratch).map_err(|e| e.to_string())
 }
 
 fn store_command(command: &str, options: &Options) -> Result<String, String> {
@@ -113,7 +130,7 @@ fn store_command(command: &str, options: &Options) -> Result<String, String> {
             ("elapsed_ms", milliseconds(began)),
         ]));
     }
-    let engine = open(&store)?;
+    let engine = open(&store, None)?;
     let answer = (|| {
         let stack = engine.project(project).map_err(|e| e.to_string())?;
         match command {
@@ -159,7 +176,7 @@ fn mount_command(command: &str, options: &Options) -> Result<(), String> {
             &[("mount_ms", milliseconds(began))],
         );
     }
-    let engine = Arc::new(open(&options.path("store")?)?);
+    let engine = Arc::new(open(&options.path("store")?, Some(&state))?);
     let opened = milliseconds(began);
     let (workspace, found) = if command == "resume" {
         Workspace::resume(&engine, &root, Some(&state), threads).map_err(|e| e.to_string())?
