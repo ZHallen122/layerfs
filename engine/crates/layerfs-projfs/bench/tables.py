@@ -207,7 +207,7 @@ def sections(directory, commits=None):
         out[f"commit-{fixture}"] = table(late, fixture, "Commit (ms)", commits, milliseconds)
         clean = merged(late, [(fixture, "projfs", f"status-used-clean-{count}", "wall") for count in (1, 100, 1000)])
         status = table(late, fixture, "status (ms)", statuses, milliseconds).split("\n")
-        status.insert(2, f"| nothing changed, after use | {NAMES['projfs']} | {cells(clean, milliseconds)} |")
+        status.insert(2, f"| before the edits, after use | {NAMES['projfs']} | {cells(clean, milliseconds)} |")
         out[f"status-{fixture}"] = "\n".join(status)
         out[f"commit-bytes-{fixture}"] = table(
             late,

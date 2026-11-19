@@ -349,7 +349,7 @@ function Commits($fx) {
                         Search $root | Out-Null
                         $state = 'after dir /s, git status and rg over the whole tree'
                         $clean = Ms { $script:before = Lfs @('status', '--root', $root) }
-                        Row $name 'projfs' "status-used-clean-$count" $run 'wall' $clean 'ms' 'OK' "$state; nothing changed yet"
+                        Row $name 'projfs' "status-used-clean-$count" $run 'wall' $clean 'ms' 'OK' "$state; before the edits (git status has rewritten its own .git/index)"
                     }
                     $bytes = 0
                     foreach ($file in $fx.Files[0..($count - 1)]) {

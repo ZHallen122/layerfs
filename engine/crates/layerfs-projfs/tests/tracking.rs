@@ -365,3 +365,33 @@ fn a_store_through_a_mapped_view_is_seen_once_the_file_is_closed() {
         (before.len(), before.modified().ok()) != (after.len(), after.modified().ok())
     );
 }
+
+/// Discard after the kinds of change that leave unusual items on disk: a
+/// placeholder made read-only without ever being read, a placeholder
+/// renamed without ever being read, deleted names, and a local directory.
+#[test]
+fn discard_removes_every_kind_of_item_a_session_leaves() {
+    let fixture = Fixture::new("tk-discard");
+    let ws = fixture.mount("ws");
+    let root = ws.root().to_owned();
+    ops::run(
+        fixture.home.path(),
+        &[
+            Op::Read(root.join("README.md")),
+            Op::ReadOnly(at(&root, "src/main.rs"), true),
+            Op::Rename(
+                at(&root, "locked/read-only.txt"),
+                at(&root, "locked/moved.txt"),
+            ),
+            Op::Remove(root.join("empty.bin")),
+            Op::Rename(root.join("README.md"), root.join("README2.md")),
+            Op::Mkdir(root.join("pkg")),
+            Op::Write(at(&root, "pkg/a.txt"), b"one".to_vec()),
+            Op::Rename(root.join("pkg"), root.join("pkg2")),
+        ],
+    );
+    assert_eq!(ws.status().expect("status").changes.len(), 6);
+    ws.discard().expect("discard");
+    assert!(!root.exists(), "the Workspace directory is gone");
+    fixture.close();
+}
