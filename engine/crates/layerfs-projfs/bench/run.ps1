@@ -22,6 +22,9 @@ param(
     # Runs of the cases that copy a 50,000-file tree four or sixteen times.
     [int]$HeavyRuns = 1,
     [string[]]$Fixtures = @('small', 'medium', 'build'),
+    # Which groups of cases run: sessions (create, use, end, one Workspace's
+    # disk), commits, disk (1, 4 and 16), builds.
+    [string[]]$Cases = @('sessions', 'commits', 'disk', 'builds'),
     [string]$Work = (Join-Path $env:TEMP 'lfsb'),
     [string]$Out = ''
 )
@@ -130,6 +133,7 @@ try { $defender = Get-MpComputerStatus } catch { }
 $environment = [ordered]@{
     run_id                = $RunId
     runs                  = $Runs
+    cases                 = @($Cases)
     heavy_runs            = $HeavyRuns
     commit                = $SourceCommit
     dirty                 = $SourceDirty
@@ -327,28 +331,46 @@ function Commits($fx) {
     foreach ($count in 1, 100, 1000) {
         if ($count -gt $fx.Files.Count) { continue }
         foreach ($run in 1..$Runs) {
-            Guard $name 'projfs' "commit-$count" $run {
-                $branch = "commit-$count-$run-$Tag"
-                $forked = Lfs @('fork', '--store', $fx.Store, '--project', 'bench', '--branch', $branch, '--from', 'work')
-                if ($forked.Code -ne 0) { throw "fork: $($forked.Text)" }
-                $root = Join-Path $Work "cm-$name-$count-$run"
-                $mounted = Start-Provider @('mount', '--store', $fx.Store, '--project', 'bench', '--branch', $branch, '--root', $root)
-                $bytes = 0
-                foreach ($file in $fx.Files[0..($count - 1)]) {
-                    $path = Join-Path $root $file
-                    [System.IO.File]::AppendAllText($path, "`n// bench edit $run`n")
-                    $bytes += (Get-Item -LiteralPath $path).Length
+            # Twice: on a fresh mount, where almost nothing is on disk, and
+            # after the whole tree was listed, git status run and every file
+            # read by a search, which is how a Workspace looks in use.
+            foreach ($used in $false, $true) {
+                $case = if ($used) { "commit-used-$count" } else { "commit-$count" }
+                Guard $name 'projfs' $case $run {
+                    $branch = "$case-$run-$Tag"
+                    $forked = Lfs @('fork', '--store', $fx.Store, '--project', 'bench', '--branch', $branch, '--from', 'work')
+                    if ($forked.Code -ne 0) { throw "fork: $($forked.Text)" }
+                    $root = Join-Path $Work "cm-$name-$case-$run"
+                    $mounted = Start-Provider @('mount', '--store', $fx.Store, '--project', 'bench', '--branch', $branch, '--root', $root)
+                    $state = 'fresh mount'
+                    if ($used) {
+                        Listing $root | Out-Null
+                        Status $root | Out-Null
+                        Search $root | Out-Null
+                        $state = 'after dir /s, git status and rg over the whole tree'
+                        $clean = Ms { $script:before = Lfs @('status', '--root', $root) }
+                        Row $name 'projfs' "status-used-clean-$count" $run 'wall' $clean 'ms' 'OK' "$state; nothing changed yet"
+                    }
+                    $bytes = 0
+                    foreach ($file in $fx.Files[0..($count - 1)]) {
+                        $path = Join-Path $root $file
+                        [System.IO.File]::AppendAllText($path, "`n// bench edit $run`n")
+                        $bytes += (Get-Item -LiteralPath $path).Length
+                    }
+                    $pending = Ms { $script:before = Lfs @('status', '--root', $root) }
+                    Row $name 'projfs' "status-before-$case" $run 'wall' $pending 'ms' 'OK' "$state; $count files changed"
+                    $wall = Ms { $script:done = Lfs @('commit', '--root', $root, '--message', "bench $count") }
+                    if ($script:done.Code -ne 0) { throw "commit: $($script:done.Text)" }
+                    Row $name 'projfs' $case $run 'wall' $wall 'ms' 'OK' "$state; $count files appended to; $bytes bytes in them"
+                    Row $name 'projfs' $case $run 'internal' $script:done.Json.elapsed_ms 'ms'
+                    Row $name 'projfs' $case $run 'bytes_read' $script:done.Json.bytes_read 'bytes'
+                    Row $name 'projfs' $case $run 'bytes_written' $script:done.Json.bytes_written 'bytes'
+                    Row $name 'projfs' $case $run 'applied' $script:done.Json.applied 'count'
+                    $status = Ms { $script:after = Lfs @('status', '--root', $root) }
+                    Row $name 'projfs' "status-after-$case" $run 'wall' $status 'ms'
+                    Provider $name $case $run $mounted.Process
+                    Discard $name "discard-after-$case" $run $root $mounted.Process
                 }
-                $wall = Ms { $script:done = Lfs @('commit', '--root', $root, '--message', "bench $count") }
-                if ($script:done.Code -ne 0) { throw "commit: $($script:done.Text)" }
-                Row $name 'projfs' "commit-$count" $run 'wall' $wall 'ms' 'OK' "$count files appended to; $bytes bytes in them"
-                Row $name 'projfs' "commit-$count" $run 'internal' $script:done.Json.elapsed_ms 'ms'
-                Row $name 'projfs' "commit-$count" $run 'bytes_read' $script:done.Json.bytes_read 'bytes'
-                Row $name 'projfs' "commit-$count" $run 'bytes_written' $script:done.Json.bytes_written 'bytes'
-                $status = Ms { $script:after = Lfs @('status', '--root', $root) }
-                Row $name 'projfs' "status-after-commit-$count" $run 'wall' $status 'ms'
-                Provider $name "commit-$count" $run $mounted.Process
-                Discard $name "discard-after-commit-$count" $run $root $mounted.Process
             }
             # Reference only, a different operation: git add + commit of the same edits in a worktree.
             Guard $name 'worktree' "git-commit-$count" $run {
@@ -485,7 +507,14 @@ foreach ($name in $Fixtures) {
         store_bytes = (Get-Item $fx.Store).Length
     }
     $described | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $Out 'fixtures.json')
-    if ($name -eq 'build') { Builds $fx } else { Sessions $fx; Commits $fx; Disk $fx }
+    if ($name -eq 'build') {
+        if ($Cases -contains 'builds') { Builds $fx }
+    }
+    else {
+        if ($Cases -contains 'sessions') { Sessions $fx }
+        if ($Cases -contains 'commits') { Commits $fx }
+        if ($Cases -contains 'disk') { Disk $fx }
+    }
 }
 Write-Host "raw data: $Raw"
 & (Join-Path $PSScriptRoot 'summarize.ps1') -Raw $Raw

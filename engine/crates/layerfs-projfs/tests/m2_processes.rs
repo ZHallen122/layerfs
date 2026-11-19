@@ -102,8 +102,8 @@ fn a_file_held_open_by_another_process_during_commit() {
         "The Commit succeeds with the bytes on disk at that moment and names the file in \
          `live`. A file open for writing cannot be opened deny-write, so it is read shared \
          and its size and time are compared before and after; a change during the read \
-         refuses the Commit as `Busy`. Such a file stays journaled and is compared again by \
-         the next Commit.",
+         refuses the Commit as `Busy`. Such a file is compared again by every Commit until \
+         the change journal shows its handle closed.",
     );
 }
 
@@ -186,13 +186,15 @@ fn a_file_written_through_a_memory_mapped_view() {
     verdict(
         "a file written through a memory-mapped view",
         "PASS",
-        "Opening a file for a writable mapping converts it to a full file and journals it. \
+        "Opening a base file for a writable mapping converts it to a full file, which the \
+         change journal records. \
          With a shared file handle, a Commit while the view is still mapped and unflushed \
          stores the bytes written through it (Windows serves reads and views from one cache) \
          and lists the file in `live`. With an exclusive handle (the .NET default) nobody can \
          read the file: status reports it modified and the Commit is refused `Busy`, naming \
-         it, with nothing published; it commits once unmapped. Not covered: a store through \
-         a view kept after its file handle closed raises no notification.",
+         it, with nothing published; it commits once unmapped. A gap that stays: a store \
+         through a view of a file that was already full adds no journal record while the \
+         file is open, so it is seen only once the file is closed (tests/tracking.rs).",
     );
 }
 
@@ -336,15 +338,38 @@ fn the_provider_is_killed_and_restarted() {
     );
     assert!(run(&["discard", "--root", text(&root)]).contains("\"ended\""));
     assert!(resumed.wait().expect("exit").success());
+    // What that Commit holds, read back through a fresh mount: the tree as
+    // imported, without the file deleted before the kill, with the file
+    // rewritten before the kill, and without the file created before the
+    // kill and deleted while no provider ran.
+    let (mut fresh, _) = serve(
+        &[
+            &["mount"],
+            &store_args[..],
+            &["--branch", "work", "--root", text(&root)],
+        ]
+        .concat(),
+    );
+    let mut expected = support::tree_digests(&tree);
+    expected.remove("empty.bin");
+    expected.insert(
+        "assets/large.bin".to_owned(),
+        *blake3::hash(b"shrunk").as_bytes(),
+    );
+    assert_eq!(support::tree_digests(&root), expected);
+    assert!(run(&["discard", "--root", text(&root)]).contains("\"ended\""));
+    assert!(fresh.wait().expect("exit").success());
     verdict(
         "provider process killed mid-session, then restarted",
         "PASS",
         "While no provider runs: files already read or written stay readable; a file never \
          read fails with error 369 or 372 and a directory never opened with 369; creating a \
          file or rewriting a hydrated one fails with 369; deleting a full file works; a \
-         deleted file's tombstone shows as a name. `resume` scans the local disk before \
-         serving, so changes from before the kill and from the downtime are both in status. \
-         Nothing written is lost. The Branch is bound at its head as of the restart.",
+         deleted file's tombstone shows as a name. `resume` reads the volume's change \
+         journal from the last Commit's position, so changes from before the kill and from \
+         the downtime are both in status. Nothing written is lost: a fresh mount of the \
+         Commit made after the restart holds exactly the tree as it was left. If the \
+         Branch moved meanwhile, Commit is refused (tests/tracking.rs).",
     );
 }
 

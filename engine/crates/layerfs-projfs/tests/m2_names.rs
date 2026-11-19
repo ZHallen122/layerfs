@@ -351,8 +351,8 @@ fn the_read_only_attribute_survives() {
         "read-only attribute across mount, edit, Commit, remount",
         "PASS",
         "stored as the file mode's write bits (0o444 / 0o644). ProjFS sends no notification \
-         for an attribute change, so status and Commit list the directories on disk to find \
-         one; cost follows the files on disk.",
+         for an attribute change; the volume's change journal records one, and that is \
+         where status and Commit learn of it. No directory is listed to find it.",
     );
 }
 

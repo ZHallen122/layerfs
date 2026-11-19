@@ -18,6 +18,12 @@ writes each table between the report's `<!-- begin:NAME -->` and
 
 exits 1 unless every generated table is in the report verbatim between its
 two marker lines, and the report has no marker without a table.
+
+    ... tables.py <results directory> --commits <second results directory> ...
+
+takes the Commit, status and build tables from a second run (one made with
+`run.ps1 -Cases commits,builds`), and everything else from the first. The
+second run's own identity is the table `environment-commits`.
 """
 
 import csv
@@ -92,13 +98,42 @@ def per_setup(label, case, metric="wall", setups=SETUPS):
     return [(label, setup, case, metric) for setup in setups]
 
 
-def sections(directory):
+def merged(rows, keys):
+    """The samples of several cases that measure the same thing."""
+    values = []
+    for key in keys:
+        values += rows.get(key, [])
+    return values
+
+
+def sections(directory, commits=None):
     rows, failed = load(directory)
     environment = json.loads((directory / "environment.json").read_text(encoding="utf-8-sig"))
     fixtures = json.loads((directory / "fixtures.json").read_text(encoding="utf-8-sig"))
     if isinstance(fixtures, dict):
         fixtures = [fixtures]
     out = {}
+    second = None
+    if commits is not None:
+        second, second_failed = load(commits)
+        for key, count in second_failed.items():
+            failed[key] += count
+        record = json.loads((commits / "environment.json").read_text(encoding="utf-8-sig"))
+        out["environment-commits"] = "\n".join(
+            [
+                "| | |",
+                "| --- | --- |",
+                f"| Run | `{record['run_id']}`, {record['runs']} runs per case, "
+                f"cases: {', '.join(record.get('cases', []))} |",
+                f"| Source | commit `{record['commit'][:9]}`, checkout dirty: {str(record['dirty']).lower()} |",
+                f"| Toolchain | {record['rustc']} |",
+                f"| Defender real-time scanning | **{'on' if record['defender_realtime'] is True else record['defender_realtime']}** "
+                f"(tamper protection: {str(record['defender_tamper']).lower()}) |",
+                f"| Fixtures | the same Stores and source trees as the first run, in `{record['work_directory']}` |",
+            ]
+        )
+    # The rows the Commit, status and build tables are made from.
+    late = second if second is not None else rows
 
     out["environment"] = "\n".join(
         [
@@ -153,28 +188,66 @@ def sections(directory):
             + per_setup("rg, second", "rg-second"),
             milliseconds,
         )
-        commits = []
+        commits, statuses = [], []
         for count in (1, 100, 1000):
+            changed = f"{files(count)} changed"
             commits += [
-                (f"Commit, {files(count)} changed: command", "projfs", f"commit-{count}", "wall"),
-                (f"Commit, {files(count)} changed: inside the provider", "projfs", f"commit-{count}", "internal"),
-                (f"status after the Commit of {files(count)}", "projfs", f"status-after-commit-{count}", "wall"),
+                (f"{changed}, fresh mount: command", "projfs", f"commit-{count}", "wall"),
+                (f"{changed}, fresh mount: inside the provider", "projfs", f"commit-{count}", "internal"),
+                (f"{changed}, after use: command", "projfs", f"commit-used-{count}", "wall"),
+                (f"{changed}, after use: inside the provider", "projfs", f"commit-used-{count}", "internal"),
                 (f"reference: git add + git commit, {files(count)}", "worktree", f"git-commit-{count}", "wall"),
             ]
-        out[f"commit-{fixture}"] = table(rows, fixture, "Commit (ms)", commits, milliseconds)
+            statuses += [
+                (f"{changed}, fresh mount", "projfs", f"status-before-commit-{count}", "wall"),
+                (f"{changed}, after use", "projfs", f"status-before-commit-used-{count}", "wall"),
+                (f"after the Commit of {files(count)}, fresh mount", "projfs", f"status-after-commit-{count}", "wall"),
+                (f"after the Commit of {files(count)}, after use", "projfs", f"status-after-commit-used-{count}", "wall"),
+            ]
+        out[f"commit-{fixture}"] = table(late, fixture, "Commit (ms)", commits, milliseconds)
+        clean = merged(late, [(fixture, "projfs", f"status-used-clean-{count}", "wall") for count in (1, 100, 1000)])
+        status = table(late, fixture, "status (ms)", statuses, milliseconds).split("\n")
+        status.insert(2, f"| nothing changed, after use | {NAMES['projfs']} | {cells(clean, milliseconds)} |")
+        out[f"status-{fixture}"] = "\n".join(status)
         out[f"commit-bytes-{fixture}"] = table(
-            rows,
+            late,
             fixture,
             "bytes a Commit handled (MiB)",
             [
-                (f"{files(count)}: read from disk", "projfs", f"commit-{count}", "bytes_read")
+                (f"{files(count)}, fresh mount: read from disk", "projfs", f"commit-{count}", "bytes_read")
                 for count in (1, 100, 1000)
             ]
             + [
-                (f"{files(count)}: written to the overlay", "projfs", f"commit-{count}", "bytes_written")
+                (f"{files(count)}, after use: read from disk", "projfs", f"commit-used-{count}", "bytes_read")
+                for count in (1, 100, 1000)
+            ]
+            + [
+                (f"{files(count)}, fresh mount: written to the overlay", "projfs", f"commit-{count}", "bytes_written")
                 for count in (1, 100, 1000)
             ],
             mebibytes,
+        )
+        out[f"commit-memory-{fixture}"] = table(
+            late,
+            fixture,
+            "provider memory after a Commit, peak working set (MiB)",
+            [
+                (f"{files(count)}, {state}", "projfs", f"commit{used}-{count}", "provider_peak_working_set")
+                for count in (1, 100, 1000)
+                for state, used in (("fresh mount", ""), ("after use", "-used"))
+            ],
+            mebibytes,
+        )
+        out[f"commit-cpu-{fixture}"] = table(
+            late,
+            fixture,
+            "provider CPU time after a Commit (ms)",
+            [
+                (f"{files(count)}, {state}", "projfs", f"commit{used}-{count}", "provider_cpu")
+                for count in (1, 100, 1000)
+                for state, used in (("fresh mount", ""), ("after use", "-used"))
+            ],
+            milliseconds,
         )
         out[f"end-{fixture}"] = table(
             rows,
@@ -243,10 +316,6 @@ def sections(directory):
                 ("after listing, git status and rg", "projfs", "session", "provider_peak_working_set"),
             ]
             + [
-                (f"after a Commit of {files(count)}", "projfs", f"commit-{count}", "provider_peak_working_set")
-                for count in (1, 100, 1000)
-            ]
-            + [
                 (
                     f"sum over {count} provider{'s' if count > 1 else ''}, each listed and git status",
                     "projfs",
@@ -264,10 +333,6 @@ def sections(directory):
             [
                 ("right after mount", "projfs", "mount-warm", "provider_cpu"),
                 ("after listing, git status and rg", "projfs", "session", "provider_cpu"),
-            ]
-            + [
-                (f"after a Commit of {files(count)}", "projfs", f"commit-{count}", "provider_cpu")
-                for count in (1, 100, 1000)
             ],
             milliseconds,
         )
@@ -281,7 +346,7 @@ def sections(directory):
 
     builds = ("projfs", "copy", "worktree")
     out["build"] = table(
-        rows,
+        late,
         "build",
         "cargo build of ripgrep (ms)",
         per_setup("full build", "build-full", setups=builds)
@@ -293,7 +358,7 @@ def sections(directory):
         milliseconds,
     )
     out["build-disk"] = table(
-        rows,
+        late,
         "build",
         "after the build (MiB)",
         [
@@ -306,7 +371,7 @@ def sections(directory):
         mebibytes,
     )
     out["build-count"] = table(
-        rows,
+        late,
         "build",
         "after the build",
         [
@@ -317,8 +382,9 @@ def sections(directory):
         whole,
     )
     total = sum(failed.values())
+    counted = sum(len(v) for v in rows.values()) + (sum(len(v) for v in second.values()) if second else 0)
     out["failed"] = (
-        f"Rows in `raw.csv`: {sum(len(v) for v in rows.values()) + total:,}, of which FAILED: {total}."
+        f"Rows in `raw.csv`{' of both runs' if second else ''}: {counted + total:,}, of which FAILED: {total}."
         + ("" if not total else " " + "; ".join(f"{'/'.join(key)}: {count}" for key, count in sorted(failed.items())))
     )
     return out
@@ -330,7 +396,8 @@ def marked(name):
 
 def main():
     directory = Path(sys.argv[1])
-    made = sections(directory)
+    commits = Path(sys.argv[sys.argv.index("--commits") + 1]) if "--commits" in sys.argv else None
+    made = sections(directory, commits)
     for mode in ("--fill", "--check"):
         if mode not in sys.argv:
             continue
