@@ -24,9 +24,9 @@
 > out, contents are compared.
 >
 > **The measurements** in section 7 are one full run of the benchmark, of
-> the commit before the last two code changes, built with the machine's
-> default compiler instead of the repository's, on a machine that another
-> session began to use near the end. Section 7 says what that touches.
+> the last commit that changes code or tests, from a clean clone, built
+> with the repository's compiler (rustc 1.85.1), with no other build or
+> test running on the machine.
 
 The prototype mounts a LayerFS Workspace as an ordinary local directory through
 the Windows Projected File System (ProjFS). It uses no WSL2, no Docker, no
@@ -91,9 +91,6 @@ Read this first. Each item is explained where it is linked.
 - **Defender real-time scanning off.** It is on and tamper-protected on this
   machine; turning it off is a security setting and was not changed. Every
   number in section 7 is with real-time scanning **on**.
-- **A full benchmark run of the last commit, on the repository's compiler,
-  on a machine idle to the end.** Section 7 is one full run that misses
-  each of the three by a little, and says how.
 - **A true cold cache.** Windows has no unprivileged way to drop the file
   cache. "Cold" mounts purge only the Store file's cached pages (an
   unbuffered open, best effort). No cold-cache claim is made.
@@ -770,35 +767,41 @@ One command produced every number in this section:
 powershell -NoProfile -ExecutionPolicy Bypass -File engine\crates\layerfs-projfs\bench\run.ps1
 ```
 
-It was run from a fresh clone of this branch at `d78023836` into an empty
+It was run from a fresh clone of this branch at `59910e101` into an empty
 work directory, so the fixtures and their Stores were made by this run. It
-took two hours and fifty minutes. Its output is kept as written in
-`bench/results/20261120T043817Z/`: `raw.csv` (one row per measurement),
+took two hours and forty-two minutes. Its output is kept as written in
+`bench/results/20261120T094524Z/`: `raw.csv` (one row per measurement),
 `environment.json`, `fixtures.json`, and the script's own `summary.csv` and
-`summary.md`.
+`summary.md`. The launcher's log is `results/benchmark-run-20261120T094524Z.txt`.
 
-Three things about this run that a reader has to know:
+Three things about this run:
 
-- **It is not of the last commit.** Two commits changed the crate's code
-  after it. `ff02d795f` keeps and retries the paths a merge could not bring
-  over (13.4); no benchmark case merges, so its code runs here only as a
-  check of an empty list at each status and Commit. `79c119784` changes a
-  test. The comparison in 7.4 was made with the last commit's binary.
-- **The compiler was not the repository's.** The run's launch script did
-  not select a toolchain, so the provider was built with the machine's
-  default, rustc 1.96.0, and so was ripgrep in 7.6. The tests and lint of
-  section 9 ran on 1.85.1, and the two binaries compared in 7.4 were both
-  built with 1.85.1. A full run on 1.85.1 was not made.
-- **The machine was idle when it started, not to the end.** No other build
-  or test was running at the start. About thirteen minutes before the end,
-  another session began running `cargo test` in another checkout of this
-  repository. That overlaps the last disk cases of the medium fixture (the
-  16 copies and worktrees of 7.5) and all of 7.6. Those rows may be
-  disturbed; nothing was done to correct them.
+- **It is of the final code.** `59910e101` holds the last commit that
+  changes the crate's code (`ff02d795f`) and the last that changes a test
+  (`79c119784`). The only commit after it adds this run's output and this
+  report's text.
+- **The compiler is the repository's.** The launcher set the toolchain and
+  printed `rustc 1.85.1 (4eb161250 2025-03-15)` inside the clone before the
+  build; the benchmark script asks again and writes the answer into
+  `environment.json` (7.1). ripgrep in 7.6 was built by cargo 1.85.1 too.
+- **No other build or test ran during it.** The launcher started only after
+  the process list had shown no `cargo`, no `rustc` and no program from
+  this repository's build directory for five minutes, and then looked again
+  every 30 seconds until the end. One sample, the last before the end,
+  listed eleven `rustc` processes as not belonging to the run. They were
+  the run's own: they were compiling `lexopt`, `textwrap`, `encoding_rs`
+  and other crates of ripgrep, which are not in this repository's lock
+  file, during the builds of 7.6. The watcher reads the process list twice
+  and most likely missed their parent, a `cargo` that had just started.
+  Two more checks agree: no file in this repository's build directory was
+  written during the run, and no other agent session on the machine was
+  active.
+  What Windows does by itself (Defender, indexing, updates) was not
+  controlled.
 
-Four earlier complete runs are kept beside it and not reported, each of
-code that changed afterwards. 7.8 lists them, and uses the latest of them
-to show how far two runs on this machine differ.
+Five earlier complete runs are kept beside it and not reported. 7.8 lists
+them, and uses the latest of them to show how far two runs on this machine
+differ.
 
 How to read the tables:
 
@@ -810,7 +813,7 @@ How to read the tables:
   the raw data:
 
   ```powershell
-  python engine\crates\layerfs-projfs\bench\tables.py engine\crates\layerfs-projfs\bench\results\20261120T043817Z --compare engine\crates\layerfs-projfs\bench\results\compare --check engine\crates\layerfs-projfs\REPORT.md
+  python engine\crates\layerfs-projfs\bench\tables.py engine\crates\layerfs-projfs\bench\results\20261120T094524Z --compare engine\crates\layerfs-projfs\bench\results\compare --check engine\crates\layerfs-projfs\REPORT.md
   ```
 - Times are wall-clock milliseconds measured by the script around the whole
   command, process start included, unless a line says "inside the provider".
@@ -824,9 +827,9 @@ How to read the tables:
 <!-- begin:environment -->
 | | |
 | --- | --- |
-| Run | `20261120T043817Z`, 5 runs per case |
-| Source | commit `d78023836`, checkout dirty: false |
-| Toolchain | rustc 1.96.0 (ac68faa20 2026-05-25) |
+| Run | `20261120T094524Z`, 5 runs per case |
+| Source | commit `59910e101`, checkout dirty: false |
+| Toolchain | rustc 1.85.1 (4eb161250 2025-03-15) |
 | Machine | Intel(R) Core(TM) Ultra 9 275HX, 24 cores, 31.4 GiB memory |
 | Disk | NVMe MTFDKBA2T0QGN-1BN1AABGA SSD NVMe; work directory on NTFS |
 | Windows | Microsoft Windows 11 Home 10.0.26200 |
@@ -838,7 +841,7 @@ How to read the tables:
 <!-- begin:fixtures -->
 | fixture | source | commit | files | bytes | with `.git` | Store file |
 | --- | --- | --- | ---: | ---: | ---: | ---: |
-| small | generated by run.ps1 from seed 454 | `13b1d11df` | 1,000 | 4.2 MiB | 5.4 MiB | 2.8 MiB |
+| small | generated by run.ps1 from seed 454 | `28f3d6b19` | 1,000 | 4.2 MiB | 5.4 MiB | 2.8 MiB |
 | medium | https://github.com/rust-lang/rust tag 1.85.0 | `4d91de4e4` | 51,307 | 145.4 MiB | 189.6 MiB | 89.0 MiB |
 | build | https://github.com/BurntSushi/ripgrep tag 14.1.1 | `4649aa970` | 213 | 2.9 MiB | 3.5 MiB | 1.5 MiB |
 <!-- end:fixtures -->
@@ -850,13 +853,13 @@ holds everything. Project Init is setup and is timed once:
 <!-- begin:init-small -->
 | setup, once | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Project Init of the fixture (ms) | ProjFS Workspace | 1 | 3,468 | 3,468 | 3,468 |
+| Project Init of the fixture (ms) | ProjFS Workspace | 1 | 2,484 | 2,484 | 2,484 |
 <!-- end:init-small -->
 
 <!-- begin:init-medium -->
 | setup, once | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Project Init of the fixture (ms) | ProjFS Workspace | 1 | 93,504 | 93,504 | 93,504 |
+| Project Init of the fixture (ms) | ProjFS Workspace | 1 | 117,086 | 117,086 | 117,086 |
 <!-- end:init-medium -->
 
 The four setups:
@@ -874,12 +877,12 @@ Small fixture:
 <!-- begin:create-small -->
 | creating a Workspace (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| mount, cold: process start to ready | ProjFS Workspace | 5 | 46.6 | 44.0 | 69.8 |
-| mount, cold: inside the provider | ProjFS Workspace | 5 | 23.4 | 20.4 | 34.9 |
-| mount, warm: process start to ready | ProjFS Workspace | 5 | 41.3 | 32.9 | 61.0 |
-| mount, warm: inside the provider | ProjFS Workspace | 5 | 21.2 | 16.4 | 31.0 |
-| robocopy /E | full directory copy | 5 | 2,096 | 1,406 | 2,126 |
-| git worktree add | git worktree | 5 | 443 | 434 | 526 |
+| mount, cold: process start to ready | ProjFS Workspace | 5 | 52.0 | 41.1 | 71.7 |
+| mount, cold: inside the provider | ProjFS Workspace | 5 | 25.0 | 19.4 | 34.5 |
+| mount, warm: process start to ready | ProjFS Workspace | 5 | 61.2 | 42.3 | 65.6 |
+| mount, warm: inside the provider | ProjFS Workspace | 5 | 30.6 | 19.5 | 33.8 |
+| robocopy /E | full directory copy | 5 | 1,498 | 1,456 | 1,621 |
+| git worktree add | git worktree | 5 | 465 | 448 | 496 |
 <!-- end:create-small -->
 
 Medium fixture:
@@ -887,12 +890,12 @@ Medium fixture:
 <!-- begin:create-medium -->
 | creating a Workspace (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| mount, cold: process start to ready | ProjFS Workspace | 5 | 52.1 | 45.6 | 67.8 |
-| mount, cold: inside the provider | ProjFS Workspace | 5 | 26.1 | 23.3 | 35.4 |
-| mount, warm: process start to ready | ProjFS Workspace | 5 | 64.8 | 61.4 | 68.1 |
-| mount, warm: inside the provider | ProjFS Workspace | 5 | 32.8 | 29.6 | 36.4 |
-| robocopy /E | full directory copy | 5 | 48,011 | 34,992 | 50,443 |
-| git worktree add | git worktree | 5 | 16,487 | 15,272 | 21,672 |
+| mount, cold: process start to ready | ProjFS Workspace | 5 | 57.8 | 50.6 | 79.0 |
+| mount, cold: inside the provider | ProjFS Workspace | 5 | 34.7 | 25.9 | 40.6 |
+| mount, warm: process start to ready | ProjFS Workspace | 5 | 63.5 | 60.7 | 73.4 |
+| mount, warm: inside the provider | ProjFS Workspace | 5 | 32.7 | 30.5 | 39.4 |
+| robocopy /E | full directory copy | 5 | 54,730 | 48,514 | 57,611 |
+| git worktree add | git worktree | 5 | 27,811 | 26,754 | 29,429 |
 <!-- end:create-medium -->
 
 A mount does not grow with the tree: it binds the Branch and starts the
@@ -906,59 +909,59 @@ twice on the fresh mount, copy or worktree:
 <!-- begin:use-small -->
 | operation (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| full listing, first | ProjFS Workspace | 5 | 668 | 528 | 891 |
-| full listing, first | plain NTFS directory | 5 | 75.3 | 72.9 | 86.5 |
-| full listing, first | full directory copy | 5 | 144 | 140 | 152 |
-| full listing, first | git worktree | 5 | 60.4 | 47.6 | 83.6 |
-| full listing, second | ProjFS Workspace | 5 | 190 | 165 | 294 |
-| full listing, second | plain NTFS directory | 5 | 75.8 | 72.4 | 77.8 |
-| full listing, second | full directory copy | 5 | 130 | 123 | 134 |
-| full listing, second | git worktree | 5 | 47.6 | 34.9 | 67.1 |
-| git status, first | ProjFS Workspace | 5 | 59.3 | 40.3 | 71.6 |
-| git status, first | plain NTFS directory | 5 | 20.9 | 18.3 | 23.8 |
-| git status, first | full directory copy | 5 | 39.0 | 35.6 | 49.0 |
-| git status, first | git worktree | 5 | 85.7 | 55.0 | 102 |
-| git status, second | ProjFS Workspace | 5 | 48.5 | 47.1 | 53.6 |
-| git status, second | plain NTFS directory | 5 | 20.1 | 18.1 | 23.0 |
-| git status, second | full directory copy | 5 | 35.9 | 30.5 | 39.7 |
-| git status, second | git worktree | 5 | 71.7 | 45.9 | 86.9 |
-| rg, first | ProjFS Workspace | 5 | 332 | 301 | 382 |
-| rg, first | plain NTFS directory | 5 | 54.6 | 52.1 | 62.2 |
-| rg, first | full directory copy | 5 | 120 | 109 | 133 |
-| rg, first | git worktree | 5 | 101 | 86.7 | 158 |
-| rg, second | ProjFS Workspace | 5 | 125 | 108 | 140 |
-| rg, second | plain NTFS directory | 5 | 63.7 | 58.7 | 64.6 |
-| rg, second | full directory copy | 5 | 104 | 90.7 | 132 |
-| rg, second | git worktree | 5 | 96.9 | 91.2 | 110 |
+| full listing, first | ProjFS Workspace | 5 | 575 | 502 | 902 |
+| full listing, first | plain NTFS directory | 5 | 80.7 | 77.4 | 108 |
+| full listing, first | full directory copy | 5 | 137 | 108 | 149 |
+| full listing, first | git worktree | 5 | 56.3 | 50.7 | 76.8 |
+| full listing, second | ProjFS Workspace | 5 | 207 | 149 | 304 |
+| full listing, second | plain NTFS directory | 5 | 78.6 | 75.0 | 134 |
+| full listing, second | full directory copy | 5 | 98.7 | 80.3 | 126 |
+| full listing, second | git worktree | 5 | 47.4 | 44.6 | 63.7 |
+| git status, first | ProjFS Workspace | 5 | 46.0 | 41.1 | 72.5 |
+| git status, first | plain NTFS directory | 5 | 22.0 | 20.3 | 34.5 |
+| git status, first | full directory copy | 5 | 29.7 | 24.2 | 37.8 |
+| git status, first | git worktree | 5 | 74.9 | 34.5 | 116 |
+| git status, second | ProjFS Workspace | 5 | 49.5 | 48.9 | 56.5 |
+| git status, second | plain NTFS directory | 5 | 23.0 | 19.0 | 32.5 |
+| git status, second | full directory copy | 5 | 23.2 | 21.9 | 35.6 |
+| git status, second | git worktree | 5 | 35.9 | 29.5 | 74.4 |
+| rg, first | ProjFS Workspace | 5 | 323 | 299 | 346 |
+| rg, first | plain NTFS directory | 5 | 60.3 | 53.6 | 78.5 |
+| rg, first | full directory copy | 5 | 101 | 89.3 | 130 |
+| rg, first | git worktree | 5 | 120 | 100 | 191 |
+| rg, second | ProjFS Workspace | 5 | 139 | 132 | 147 |
+| rg, second | plain NTFS directory | 5 | 66.9 | 63.1 | 95.2 |
+| rg, second | full directory copy | 5 | 90.0 | 89.6 | 123 |
+| rg, second | git worktree | 5 | 95.5 | 84.8 | 119 |
 <!-- end:use-small -->
 
 <!-- begin:use-medium -->
 | operation (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| full listing, first | ProjFS Workspace | 5 | 12,874 | 11,832 | 13,997 |
-| full listing, first | plain NTFS directory | 5 | 907 | 875 | 957 |
-| full listing, first | full directory copy | 5 | 740 | 667 | 872 |
-| full listing, first | git worktree | 5 | 953 | 849 | 1,039 |
-| full listing, second | ProjFS Workspace | 5 | 1,638 | 1,476 | 2,621 |
-| full listing, second | plain NTFS directory | 5 | 758 | 666 | 884 |
-| full listing, second | full directory copy | 5 | 569 | 526 | 949 |
-| full listing, second | git worktree | 5 | 628 | 562 | 870 |
-| git status, first | ProjFS Workspace | 5 | 2,534 | 2,128 | 2,890 |
-| git status, first | plain NTFS directory | 5 | 91.9 | 91.0 | 242 |
-| git status, first | full directory copy | 5 | 99.3 | 94.0 | 227 |
-| git status, first | git worktree | 5 | 244 | 130 | 247 |
-| git status, second | ProjFS Workspace | 5 | 448 | 354 | 478 |
-| git status, second | plain NTFS directory | 5 | 103 | 93.9 | 112 |
-| git status, second | full directory copy | 5 | 99.4 | 90.6 | 108 |
-| git status, second | git worktree | 5 | 103 | 95.1 | 106 |
-| rg, first | ProjFS Workspace | 5 | 21,768 | 18,707 | 29,900 |
-| rg, first | plain NTFS directory | 5 | 1,529 | 1,510 | 20,789 |
-| rg, first | full directory copy | 5 | 10,682 | 10,475 | 11,694 |
-| rg, first | git worktree | 5 | 11,563 | 11,336 | 12,173 |
-| rg, second | ProjFS Workspace | 5 | 2,454 | 2,428 | 2,640 |
-| rg, second | plain NTFS directory | 5 | 1,531 | 1,518 | 1,937 |
-| rg, second | full directory copy | 5 | 1,930 | 1,872 | 1,975 |
-| rg, second | git worktree | 5 | 1,945 | 1,910 | 2,003 |
+| full listing, first | ProjFS Workspace | 5 | 12,856 | 12,335 | 14,745 |
+| full listing, first | plain NTFS directory | 5 | 827 | 676 | 921 |
+| full listing, first | full directory copy | 5 | 944 | 848 | 1,030 |
+| full listing, first | git worktree | 5 | 978 | 932 | 1,038 |
+| full listing, second | ProjFS Workspace | 5 | 1,991 | 1,806 | 2,177 |
+| full listing, second | plain NTFS directory | 5 | 626 | 536 | 740 |
+| full listing, second | full directory copy | 5 | 822 | 534 | 863 |
+| full listing, second | git worktree | 5 | 654 | 588 | 858 |
+| git status, first | ProjFS Workspace | 5 | 1,166 | 1,037 | 1,197 |
+| git status, first | plain NTFS directory | 5 | 105 | 92.7 | 116 |
+| git status, first | full directory copy | 5 | 101 | 89.6 | 153 |
+| git status, first | git worktree | 5 | 164 | 148 | 194 |
+| git status, second | ProjFS Workspace | 5 | 473 | 436 | 484 |
+| git status, second | plain NTFS directory | 5 | 97.7 | 89.3 | 102 |
+| git status, second | full directory copy | 5 | 96.7 | 91.2 | 120 |
+| git status, second | git worktree | 5 | 93.2 | 89.6 | 313 |
+| rg, first | ProjFS Workspace | 5 | 28,179 | 20,602 | 33,305 |
+| rg, first | plain NTFS directory | 5 | 1,538 | 1,513 | 1,556 |
+| rg, first | full directory copy | 5 | 10,560 | 9,749 | 11,394 |
+| rg, first | git worktree | 5 | 10,562 | 10,191 | 11,415 |
+| rg, second | ProjFS Workspace | 5 | 2,479 | 2,421 | 2,584 |
+| rg, second | plain NTFS directory | 5 | 1,598 | 1,518 | 1,650 |
+| rg, second | full directory copy | 5 | 2,056 | 1,949 | 2,117 |
+| rg, second | git worktree | 5 | 1,957 | 1,918 | 2,003 |
 <!-- end:use-medium -->
 
 What the tables show:
@@ -971,9 +974,9 @@ What the tables show:
   (documented behavior), and the provider answers from the listings it kept.
 - **The first search pays for hydration.** `rg` reads nearly every file, so
   the provider serves each file's bytes once and ProjFS writes them to disk.
-  The second search is about a fifth slower than the copy's on the small
-  fixture (125 ms against 104 ms) and about a quarter slower on the medium
-  one (2,454 ms against 1,930 ms).
+  The second search takes about one and a half times the copy's on the
+  small fixture (139 ms against 90.0 ms) and is about a fifth slower on the
+  medium one (2,479 ms against 2,056 ms).
 - The copy's and the worktree's first `rg` are also far above the plain
   directory's. Their files were written moments before; the plain directory
   had been read earlier. The share of Defender in that difference was not
@@ -981,36 +984,37 @@ What the tables show:
 - **`git status` hydrates what Git reads, and how much that is depends on
   the clock.** Git reads its own files, and every working file whose time
   is too close to its index's for Git to trust, which it then reads to
-  compare. After `git status` 1,416 files of the medium fixture had content
-  on disk in this run (7.5); in the two earlier full runs, whose fixtures
-  were cloned at other moments, 317 and 42. That is why the first
-  `git status` took 2.5 s here and about 1 s in those. It is a property of
-  a freshly cloned repository, in a worktree too (244 ms here against
-  119 ms in the run before), not of the provider.
+  compare. After `git status` 211 files of the medium fixture had content
+  on disk in this run (7.5); in the three earlier full runs, whose fixtures
+  were cloned at other moments, 42, 317 and 1,416. The first `git status`
+  took 1.2 s here and 2.5 s in the run with 1,416. It is a property of a
+  freshly cloned repository, in a worktree too (164 ms here, 244 ms in that
+  run), not of the provider.
 
 ### 7.3 Ending a Workspace
 
 <!-- begin:end-small -->
 | ending a Workspace (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| discard right after mount | ProjFS Workspace | 5 | 29.0 | 25.8 | 33.3 |
-| discard after listing, git status and rg | ProjFS Workspace | 5 | 265 | 211 | 607 |
-| rmdir /s /q | full directory copy | 5 | 478 | 419 | 576 |
-| git worktree remove --force | git worktree | 5 | 120 | 119 | 142 |
+| discard right after mount | ProjFS Workspace | 5 | 33.5 | 30.5 | 36.7 |
+| discard after listing, git status and rg | ProjFS Workspace | 5 | 338 | 242 | 366 |
+| rmdir /s /q | full directory copy | 5 | 432 | 413 | 510 |
+| git worktree remove --force | git worktree | 5 | 124 | 119 | 143 |
 <!-- end:end-small -->
 
 <!-- begin:end-medium -->
 | ending a Workspace (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| discard right after mount | ProjFS Workspace | 5 | 33.1 | 32.0 | 37.1 |
-| discard after listing, git status and rg | ProjFS Workspace | 5 | 13,515 | 10,818 | 17,347 |
-| rmdir /s /q | full directory copy | 5 | 12,546 | 12,182 | 13,338 |
-| git worktree remove --force | git worktree | 5 | 10,194 | 8,316 | 11,037 |
+| discard right after mount | ProjFS Workspace | 5 | 32.4 | 32.2 | 33.9 |
+| discard after listing, git status and rg | ProjFS Workspace | 5 | 10,638 | 10,292 | 12,681 |
+| rmdir /s /q | full directory copy | 5 | 15,071 | 12,224 | 15,624 |
+| git worktree remove --force | git worktree | 5 | 9,410 | 8,961 | 14,129 |
 <!-- end:end-medium -->
 
 Discarding a Workspace that was never used is quick at either size.
 Discarding one whose files were all read deletes that many files. On the
-medium fixture that costs about what deleting a copy costs.
+medium fixture that took 10.6 s, where deleting a copy took 15.1 s and
+removing a worktree 9.4 s.
 
 ### 7.4 Commit and status
 
@@ -1030,41 +1034,41 @@ edits. It is a different operation and is not a like-for-like comparison.
 <!-- begin:commit-small -->
 | Commit (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 1 file changed, fresh mount: command | ProjFS Workspace | 5 | 22.2 | 20.2 | 43.4 |
-| 1 file changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 9.3 | 8.3 | 16.0 |
-| 1 file changed, after use: command | ProjFS Workspace | 5 | 21.3 | 20.4 | 27.7 |
-| 1 file changed, after use: inside the provider | ProjFS Workspace | 5 | 9.9 | 9.9 | 14.2 |
-| reference: git add + git commit, 1 file | git worktree | 5 | 389 | 224 | 415 |
-| 100 files changed, fresh mount: command | ProjFS Workspace | 5 | 69.0 | 67.7 | 70.2 |
-| 100 files changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 56.0 | 55.4 | 56.7 |
-| 100 files changed, after use: command | ProjFS Workspace | 5 | 67.4 | 63.4 | 85.3 |
-| 100 files changed, after use: inside the provider | ProjFS Workspace | 5 | 55.5 | 51.4 | 71.2 |
-| reference: git add + git commit, 100 files | git worktree | 5 | 518 | 390 | 578 |
-| 1,000 files changed, fresh mount: command | ProjFS Workspace | 5 | 514 | 494 | 656 |
-| 1,000 files changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 501 | 481 | 644 |
-| 1,000 files changed, after use: command | ProjFS Workspace | 5 | 472 | 439 | 800 |
-| 1,000 files changed, after use: inside the provider | ProjFS Workspace | 5 | 460 | 425 | 784 |
-| reference: git add + git commit, 1,000 files | git worktree | 5 | 2,341 | 1,904 | 2,389 |
+| 1 file changed, fresh mount: command | ProjFS Workspace | 5 | 22.6 | 18.9 | 45.3 |
+| 1 file changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 8.8 | 8.1 | 11.5 |
+| 1 file changed, after use: command | ProjFS Workspace | 5 | 22.1 | 21.5 | 27.0 |
+| 1 file changed, after use: inside the provider | ProjFS Workspace | 5 | 9.4 | 8.7 | 10.1 |
+| reference: git add + git commit, 1 file | git worktree | 5 | 282 | 91.5 | 434 |
+| 100 files changed, fresh mount: command | ProjFS Workspace | 5 | 75.0 | 68.3 | 90.0 |
+| 100 files changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 60.2 | 56.4 | 61.7 |
+| 100 files changed, after use: command | ProjFS Workspace | 5 | 85.0 | 66.0 | 124 |
+| 100 files changed, after use: inside the provider | ProjFS Workspace | 5 | 71.3 | 51.5 | 100 |
+| reference: git add + git commit, 100 files | git worktree | 5 | 549 | 369 | 580 |
+| 1,000 files changed, fresh mount: command | ProjFS Workspace | 5 | 688 | 528 | 1,269 |
+| 1,000 files changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 672 | 517 | 1,246 |
+| 1,000 files changed, after use: command | ProjFS Workspace | 5 | 946 | 889 | 1,097 |
+| 1,000 files changed, after use: inside the provider | ProjFS Workspace | 5 | 922 | 868 | 1,076 |
+| reference: git add + git commit, 1,000 files | git worktree | 5 | 1,914 | 1,802 | 2,212 |
 <!-- end:commit-small -->
 
 <!-- begin:commit-medium -->
 | Commit (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 1 file changed, fresh mount: command | ProjFS Workspace | 5 | 37.3 | 22.1 | 39.7 |
-| 1 file changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 19.4 | 11.4 | 20.6 |
-| 1 file changed, after use: command | ProjFS Workspace | 5 | 153 | 147 | 172 |
-| 1 file changed, after use: inside the provider | ProjFS Workspace | 5 | 132 | 130 | 151 |
-| reference: git add + git commit, 1 file | git worktree | 5 | 730 | 611 | 836 |
-| 100 files changed, fresh mount: command | ProjFS Workspace | 5 | 124 | 118 | 133 |
-| 100 files changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 113 | 106 | 120 |
-| 100 files changed, after use: command | ProjFS Workspace | 5 | 307 | 303 | 313 |
-| 100 files changed, after use: inside the provider | ProjFS Workspace | 5 | 287 | 282 | 296 |
-| reference: git add + git commit, 100 files | git worktree | 5 | 1,076 | 979 | 1,108 |
-| 1,000 files changed, fresh mount: command | ProjFS Workspace | 5 | 1,426 | 1,149 | 1,551 |
-| 1,000 files changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 1,414 | 1,136 | 1,533 |
-| 1,000 files changed, after use: command | ProjFS Workspace | 5 | 1,535 | 1,525 | 1,631 |
-| 1,000 files changed, after use: inside the provider | ProjFS Workspace | 5 | 1,516 | 1,504 | 1,611 |
-| reference: git add + git commit, 1,000 files | git worktree | 5 | 2,973 | 2,806 | 12,119 |
+| 1 file changed, fresh mount: command | ProjFS Workspace | 5 | 38.9 | 38.1 | 43.2 |
+| 1 file changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 19.7 | 19.3 | 21.0 |
+| 1 file changed, after use: command | ProjFS Workspace | 5 | 141 | 135 | 155 |
+| 1 file changed, after use: inside the provider | ProjFS Workspace | 5 | 123 | 115 | 137 |
+| reference: git add + git commit, 1 file | git worktree | 5 | 753 | 689 | 810 |
+| 100 files changed, fresh mount: command | ProjFS Workspace | 5 | 121 | 119 | 134 |
+| 100 files changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 109 | 108 | 123 |
+| 100 files changed, after use: command | ProjFS Workspace | 5 | 312 | 284 | 327 |
+| 100 files changed, after use: inside the provider | ProjFS Workspace | 5 | 293 | 266 | 300 |
+| reference: git add + git commit, 100 files | git worktree | 5 | 1,040 | 993 | 1,189 |
+| 1,000 files changed, fresh mount: command | ProjFS Workspace | 5 | 1,665 | 1,100 | 1,714 |
+| 1,000 files changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 1,646 | 1,085 | 1,693 |
+| 1,000 files changed, after use: command | ProjFS Workspace | 5 | 1,666 | 1,647 | 1,739 |
+| 1,000 files changed, after use: inside the provider | ProjFS Workspace | 5 | 1,647 | 1,620 | 1,724 |
+| reference: git add + git commit, 1,000 files | git worktree | 5 | 3,010 | 2,852 | 4,967 |
 <!-- end:commit-medium -->
 
 `status`, before and after the Commit:
@@ -1072,37 +1076,37 @@ edits. It is a different operation and is not a like-for-like comparison.
 <!-- begin:status-small -->
 | status (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| before the edits, after use | ProjFS Workspace | 15 | 31.6 | 26.7 | 36.4 |
-| 1 file changed, fresh mount | ProjFS Workspace | 5 | 19.0 | 17.1 | 34.2 |
-| 1 file changed, after use | ProjFS Workspace | 5 | 10.8 | 9.8 | 13.5 |
-| after the Commit of 1 file, fresh mount | ProjFS Workspace | 5 | 15.7 | 10.0 | 21.3 |
-| after the Commit of 1 file, after use | ProjFS Workspace | 5 | 14.3 | 12.1 | 16.9 |
-| 100 files changed, fresh mount | ProjFS Workspace | 5 | 30.2 | 27.7 | 31.3 |
-| 100 files changed, after use | ProjFS Workspace | 5 | 21.7 | 20.1 | 24.5 |
-| after the Commit of 100 files, fresh mount | ProjFS Workspace | 5 | 15.0 | 9.0 | 18.4 |
-| after the Commit of 100 files, after use | ProjFS Workspace | 5 | 16.3 | 14.6 | 17.3 |
-| 1,000 files changed, fresh mount | ProjFS Workspace | 5 | 109 | 102 | 129 |
-| 1,000 files changed, after use | ProjFS Workspace | 5 | 97.0 | 95.3 | 119 |
-| after the Commit of 1,000 files, fresh mount | ProjFS Workspace | 5 | 15.8 | 14.4 | 18.0 |
-| after the Commit of 1,000 files, after use | ProjFS Workspace | 5 | 16.5 | 11.1 | 18.8 |
+| before the edits, after use | ProjFS Workspace | 15 | 26.7 | 24.2 | 29.7 |
+| 1 file changed, fresh mount | ProjFS Workspace | 5 | 24.3 | 21.2 | 48.9 |
+| 1 file changed, after use | ProjFS Workspace | 5 | 13.6 | 9.9 | 17.9 |
+| after the Commit of 1 file, fresh mount | ProjFS Workspace | 5 | 13.1 | 8.9 | 35.6 |
+| after the Commit of 1 file, after use | ProjFS Workspace | 5 | 15.7 | 12.6 | 17.7 |
+| 100 files changed, fresh mount | ProjFS Workspace | 5 | 33.0 | 31.3 | 39.6 |
+| 100 files changed, after use | ProjFS Workspace | 5 | 25.1 | 23.0 | 37.6 |
+| after the Commit of 100 files, fresh mount | ProjFS Workspace | 5 | 14.0 | 9.4 | 15.9 |
+| after the Commit of 100 files, after use | ProjFS Workspace | 5 | 15.6 | 14.4 | 17.3 |
+| 1,000 files changed, fresh mount | ProjFS Workspace | 5 | 118 | 106 | 166 |
+| 1,000 files changed, after use | ProjFS Workspace | 5 | 213 | 101 | 290 |
+| after the Commit of 1,000 files, fresh mount | ProjFS Workspace | 5 | 16.3 | 14.9 | 18.2 |
+| after the Commit of 1,000 files, after use | ProjFS Workspace | 5 | 16.9 | 10.6 | 18.3 |
 <!-- end:status-small -->
 
 <!-- begin:status-medium -->
 | status (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| before the edits, after use | ProjFS Workspace | 15 | 45.2 | 38.3 | 52.1 |
-| 1 file changed, fresh mount | ProjFS Workspace | 5 | 26.9 | 17.0 | 31.4 |
-| 1 file changed, after use | ProjFS Workspace | 5 | 24.4 | 20.8 | 31.2 |
-| after the Commit of 1 file, fresh mount | ProjFS Workspace | 5 | 15.4 | 9.6 | 16.4 |
-| after the Commit of 1 file, after use | ProjFS Workspace | 5 | 16.4 | 15.0 | 28.1 |
-| 100 files changed, fresh mount | ProjFS Workspace | 5 | 33.3 | 28.8 | 36.9 |
-| 100 files changed, after use | ProjFS Workspace | 5 | 63.4 | 51.6 | 68.5 |
-| after the Commit of 100 files, fresh mount | ProjFS Workspace | 5 | 15.2 | 10.6 | 16.7 |
-| after the Commit of 100 files, after use | ProjFS Workspace | 5 | 17.2 | 15.1 | 18.9 |
-| 1,000 files changed, fresh mount | ProjFS Workspace | 5 | 134 | 128 | 142 |
-| 1,000 files changed, after use | ProjFS Workspace | 5 | 250 | 169 | 317 |
-| after the Commit of 1,000 files, fresh mount | ProjFS Workspace | 5 | 16.5 | 16.2 | 16.6 |
-| after the Commit of 1,000 files, after use | ProjFS Workspace | 5 | 15.7 | 14.9 | 18.3 |
+| before the edits, after use | ProjFS Workspace | 15 | 45.8 | 41.4 | 56.7 |
+| 1 file changed, fresh mount | ProjFS Workspace | 5 | 28.6 | 27.8 | 29.2 |
+| 1 file changed, after use | ProjFS Workspace | 5 | 23.4 | 21.9 | 24.9 |
+| after the Commit of 1 file, fresh mount | ProjFS Workspace | 5 | 17.4 | 15.3 | 20.0 |
+| after the Commit of 1 file, after use | ProjFS Workspace | 5 | 16.8 | 16.2 | 61.0 |
+| 100 files changed, fresh mount | ProjFS Workspace | 5 | 35.1 | 31.6 | 37.4 |
+| 100 files changed, after use | ProjFS Workspace | 5 | 58.0 | 49.5 | 66.6 |
+| after the Commit of 100 files, fresh mount | ProjFS Workspace | 5 | 14.5 | 13.8 | 17.5 |
+| after the Commit of 100 files, after use | ProjFS Workspace | 5 | 15.9 | 15.4 | 18.2 |
+| 1,000 files changed, fresh mount | ProjFS Workspace | 5 | 230 | 142 | 250 |
+| 1,000 files changed, after use | ProjFS Workspace | 5 | 224 | 188 | 291 |
+| after the Commit of 1,000 files, fresh mount | ProjFS Workspace | 5 | 17.6 | 15.4 | 18.5 |
+| after the Commit of 1,000 files, after use | ProjFS Workspace | 5 | 16.7 | 15.5 | 18.5 |
 <!-- end:status-medium -->
 
 <!-- begin:commit-bytes-small -->
@@ -1111,9 +1115,9 @@ edits. It is a different operation and is not a like-for-like comparison.
 | 1 file, fresh mount: read from disk | ProjFS Workspace | 5 | 0.0 | 0.0 | 0.0 |
 | 100 files, fresh mount: read from disk | ProjFS Workspace | 5 | 0.4 | 0.4 | 0.4 |
 | 1,000 files, fresh mount: read from disk | ProjFS Workspace | 5 | 4.2 | 4.2 | 4.2 |
-| 1 file, after use: read from disk | ProjFS Workspace | 5 | 0.1 | 0.1 | 0.1 |
-| 100 files, after use: read from disk | ProjFS Workspace | 5 | 0.5 | 0.5 | 0.5 |
-| 1,000 files, after use: read from disk | ProjFS Workspace | 5 | 4.3 | 4.3 | 4.3 |
+| 1 file, after use: read from disk | ProjFS Workspace | 5 | 0.0 | 0.0 | 0.0 |
+| 100 files, after use: read from disk | ProjFS Workspace | 5 | 0.4 | 0.4 | 0.4 |
+| 1,000 files, after use: read from disk | ProjFS Workspace | 5 | 4.2 | 4.2 | 4.2 |
 | 1 file, fresh mount: written to the overlay | ProjFS Workspace | 5 | 0.0 | 0.0 | 0.0 |
 | 100 files, fresh mount: written to the overlay | ProjFS Workspace | 5 | 0.4 | 0.4 | 0.4 |
 | 1,000 files, fresh mount: written to the overlay | ProjFS Workspace | 5 | 4.2 | 4.2 | 4.2 |
@@ -1136,24 +1140,28 @@ edits. It is a different operation and is not a like-for-like comparison.
 What the tables show:
 
 - **A Commit after use costs what it costs on a fresh mount, plus what the
-  use itself changed.** On the small fixture the two are level at every
-  size. On the medium fixture a Commit of one changed file takes 37.3 ms on
-  a fresh mount and 153 ms after use, and the bytes table says why: after
-  use it reads 5.8 MiB instead of a few bytes. `git status` rewrote its own
-  index, `.git/index`, and a LayerFS Commit holds `.git` like everything
-  else. The same 5.8 MiB is in the 100 and 1,000 file cases.
+  use itself changed.** On the small fixture the two are level for 1 and
+  100 files; for 1,000 files the medians are 688 ms and 946 ms and the
+  ranges overlap. On the medium fixture a Commit of one changed file takes
+  38.9 ms on a fresh mount and 141 ms after use, and the bytes table says
+  why: after use it reads 5.8 MiB instead of a few bytes. `git status`
+  rewrote its own index, `.git/index`, and a LayerFS Commit holds `.git`
+  like everything else. The same 5.8 MiB is in the 100 and 1,000 file
+  cases; at 1,000 files it no longer shows in the time (1,665 ms and
+  1,666 ms).
 - **Status does not grow with what is on disk.** After the whole medium tree
-  was listed and searched, with 51,194 files holding content on disk (7.5),
-  a status takes 45.2 ms before the edits and 24.4 ms with one file changed.
-- **Status after a Commit is flat**: 15 to 17 ms on the medium fixture,
+  was listed and searched, with 51,193 files holding content on disk (7.5),
+  a status takes 45.8 ms before the edits and 23.4 ms with one file changed.
+- **Status after a Commit is flat**: 14.5 to 17.6 ms on the medium fixture,
   whatever was committed.
 - **Commit time follows the number and size of the changed files**: on the
-  medium fixture 37.3 ms, 124 ms and 1,426 ms for 1, 100 and 1,000 files on
+  medium fixture 38.9 ms, 121 ms and 1,665 ms for 1, 100 and 1,000 files on
   a fresh mount.
-- A status with many changes pending is slower after use than on a fresh
-  mount: 63.4 ms against 33.3 ms for 100 files, 250 ms against 134 ms for
-  1,000. Git's rewritten index, which a status compares byte by byte, is
-  part of that. The rest was not looked into.
+- A status with 100 changes pending is slower after use than on a fresh
+  mount: 58.0 ms against 35.1 ms. Git's rewritten index, which a status
+  compares byte by byte, is part of that. With 1,000 pending the two are
+  level on the medium fixture (224 ms and 230 ms) and not on the small one
+  (213 ms after use against 118 ms). This was not looked into.
 - Bytes read and bytes written to the overlay are equal on a fresh mount:
   every changed file is read once from NTFS and copied once into the
   overlay. That copy is the price of design choice 3.
@@ -1162,35 +1170,35 @@ What the tables show:
 compared for these cases: the fixtures differ from run to run (7.8), and
 within one run every sample adds Branches and Commits to the Store.
 `bench/compare-commit.ps1` therefore takes two release binaries, the one of
-`bbf880c68` (before the first review) and the one of the last commit,
-`ff02d795f`, both built with rustc 1.85.1, and alternates them on the same
-Commit of the medium fixture, on a fresh mount. It was run after the
-benchmark, on the Store that run had made, with no other build or test
-running before or between its three sizes. Its output is in
-`bench/results/compare/`:
+`bbf880c68` (before the first review) and the one this run built and
+measured, both built with rustc 1.85.1, and alternates them on the same
+Commit of the medium fixture, on a fresh mount. It was run five minutes
+after the benchmark ended, on the Store that run had made, with no build
+or test running. Its output is in `bench/results/compare/`:
 
 <!-- begin:compare -->
 | the same Commit by two builds (ms) | build | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Commit, 1 file changed | before the reviews | 5 | 43.0 | 41.6 | 66.8 |
-| Commit, 1 file changed | the final code | 5 | 46.2 | 44.2 | 49.2 |
-| status after the Commit of 1 file | before the reviews | 5 | 20.4 | 19.3 | 23.8 |
-| status after the Commit of 1 file | the final code | 5 | 18.4 | 17.1 | 20.1 |
-| Commit, 100 files changed | before the reviews | 5 | 126 | 120 | 152 |
-| Commit, 100 files changed | the final code | 5 | 141 | 125 | 572 |
-| status after the Commit of 100 files | before the reviews | 5 | 58.1 | 55.9 | 80.3 |
-| status after the Commit of 100 files | the final code | 5 | 12.8 | 10.1 | 16.5 |
-| Commit, 1,000 files changed | before the reviews | 5 | 957 | 778 | 1,541 |
-| Commit, 1,000 files changed | the final code | 5 | 857 | 807 | 1,449 |
-| status after the Commit of 1,000 files | before the reviews | 5 | 517 | 264 | 560 |
-| status after the Commit of 1,000 files | the final code | 5 | 18.0 | 10.4 | 20.8 |
+| Commit, 1 file changed | before the reviews | 5 | 42.2 | 34.3 | 70.4 |
+| Commit, 1 file changed | the final code | 5 | 42.0 | 23.6 | 47.2 |
+| status after the Commit of 1 file | before the reviews | 5 | 19.3 | 16.0 | 22.8 |
+| status after the Commit of 1 file | the final code | 5 | 16.9 | 16.5 | 18.1 |
+| Commit, 100 files changed | before the reviews | 5 | 126 | 114 | 161 |
+| Commit, 100 files changed | the final code | 5 | 129 | 117 | 139 |
+| status after the Commit of 100 files | before the reviews | 5 | 57.4 | 54.8 | 80.2 |
+| status after the Commit of 100 files | the final code | 5 | 12.8 | 9.9 | 25.2 |
+| Commit, 1,000 files changed | before the reviews | 5 | 1,282 | 869 | 1,445 |
+| Commit, 1,000 files changed | the final code | 5 | 932 | 782 | 1,464 |
+| status after the Commit of 1,000 files | before the reviews | 5 | 513 | 263 | 539 |
+| status after the Commit of 1,000 files | the final code | 5 | 17.9 | 11.9 | 19.3 |
 <!-- end:compare -->
 
-The Commit itself costs the same before and after at each size: the ranges
-overlap, and each build has one sample far above its others. What changed
-is the status after a Commit. Before the reviews it read every committed
-file again, because a full file was always "possibly changed": 517 ms after
-a Commit of 1,000 files. It is now 18.0 ms.
+The Commit itself costs the same before and after for 1 and 100 files. For
+1,000 files the medians are 1,282 ms and 932 ms; the two ranges cover each
+other almost entirely, so this does not show the final code to be faster.
+What changed is the status after a Commit. Before the reviews it read every
+committed file again, because a full file was always "possibly changed":
+513 ms after a Commit of 1,000 files. It is now 17.9 ms.
 
 The provider after a Commit. Its CPU time is counted from its start, so
 after use it is mostly the listing and the search, not the Commit:
@@ -1198,45 +1206,45 @@ after use it is mostly the listing and the search, not the Commit:
 <!-- begin:commit-memory-small -->
 | provider memory after a Commit, peak working set (MiB) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 1 file, fresh mount | ProjFS Workspace | 5 | 21.8 | 21.7 | 21.9 |
-| 1 file, after use | ProjFS Workspace | 5 | 24.6 | 24.3 | 25.4 |
-| 100 files, fresh mount | ProjFS Workspace | 5 | 24.4 | 24.1 | 24.5 |
-| 100 files, after use | ProjFS Workspace | 5 | 26.3 | 26.3 | 26.4 |
-| 1,000 files, fresh mount | ProjFS Workspace | 5 | 33.3 | 33.1 | 33.7 |
-| 1,000 files, after use | ProjFS Workspace | 5 | 32.6 | 32.3 | 32.8 |
+| 1 file, fresh mount | ProjFS Workspace | 5 | 21.8 | 21.7 | 22.2 |
+| 1 file, after use | ProjFS Workspace | 5 | 24.6 | 24.6 | 24.8 |
+| 100 files, fresh mount | ProjFS Workspace | 5 | 24.3 | 24.2 | 24.6 |
+| 100 files, after use | ProjFS Workspace | 5 | 26.6 | 26.4 | 26.9 |
+| 1,000 files, fresh mount | ProjFS Workspace | 5 | 33.1 | 32.9 | 33.3 |
+| 1,000 files, after use | ProjFS Workspace | 5 | 32.8 | 32.4 | 33.1 |
 <!-- end:commit-memory-small -->
 
 <!-- begin:commit-memory-medium -->
 | provider memory after a Commit, peak working set (MiB) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 1 file, fresh mount | ProjFS Workspace | 5 | 24.0 | 23.8 | 24.2 |
-| 1 file, after use | ProjFS Workspace | 5 | 50.2 | 49.8 | 51.3 |
-| 100 files, fresh mount | ProjFS Workspace | 5 | 32.4 | 32.2 | 32.6 |
-| 100 files, after use | ProjFS Workspace | 5 | 54.3 | 53.5 | 54.5 |
-| 1,000 files, fresh mount | ProjFS Workspace | 5 | 42.0 | 41.5 | 42.5 |
-| 1,000 files, after use | ProjFS Workspace | 5 | 57.2 | 56.9 | 57.4 |
+| 1 file, fresh mount | ProjFS Workspace | 5 | 24.0 | 23.9 | 24.1 |
+| 1 file, after use | ProjFS Workspace | 5 | 49.5 | 49.2 | 50.2 |
+| 100 files, fresh mount | ProjFS Workspace | 5 | 32.4 | 32.3 | 32.6 |
+| 100 files, after use | ProjFS Workspace | 5 | 54.4 | 53.8 | 54.7 |
+| 1,000 files, fresh mount | ProjFS Workspace | 5 | 42.3 | 42.1 | 42.5 |
+| 1,000 files, after use | ProjFS Workspace | 5 | 57.2 | 57.0 | 57.7 |
 <!-- end:commit-memory-medium -->
 
 <!-- begin:commit-cpu-small -->
 | provider CPU time after a Commit (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 1 file, fresh mount | ProjFS Workspace | 5 | 31.2 | 15.6 | 62.5 |
-| 1 file, after use | ProjFS Workspace | 5 | 922 | 891 | 1,234 |
-| 100 files, fresh mount | ProjFS Workspace | 5 | 141 | 93.8 | 156 |
-| 100 files, after use | ProjFS Workspace | 5 | 922 | 750 | 1,156 |
-| 1,000 files, fresh mount | ProjFS Workspace | 5 | 1,047 | 953 | 1,188 |
-| 1,000 files, after use | ProjFS Workspace | 5 | 1,562 | 1,266 | 1,875 |
+| 1 file, fresh mount | ProjFS Workspace | 5 | 46.9 | 0.0 | 109 |
+| 1 file, after use | ProjFS Workspace | 5 | 812 | 719 | 1,172 |
+| 100 files, fresh mount | ProjFS Workspace | 5 | 125 | 109 | 188 |
+| 100 files, after use | ProjFS Workspace | 5 | 984 | 938 | 1,344 |
+| 1,000 files, fresh mount | ProjFS Workspace | 5 | 1,250 | 1,141 | 1,938 |
+| 1,000 files, after use | ProjFS Workspace | 5 | 2,172 | 1,969 | 2,516 |
 <!-- end:commit-cpu-small -->
 
 <!-- begin:commit-cpu-medium -->
 | provider CPU time after a Commit (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 1 file, fresh mount | ProjFS Workspace | 5 | 62.5 | 31.2 | 78.1 |
-| 1 file, after use | ProjFS Workspace | 5 | 40,484 | 39,469 | 42,781 |
-| 100 files, fresh mount | ProjFS Workspace | 5 | 297 | 234 | 375 |
-| 100 files, after use | ProjFS Workspace | 5 | 43,547 | 43,062 | 46,828 |
-| 1,000 files, fresh mount | ProjFS Workspace | 5 | 2,203 | 1,625 | 2,422 |
-| 1,000 files, after use | ProjFS Workspace | 5 | 41,562 | 41,125 | 49,875 |
+| 1 file, fresh mount | ProjFS Workspace | 5 | 62.5 | 62.5 | 78.1 |
+| 1 file, after use | ProjFS Workspace | 5 | 43,688 | 42,250 | 46,672 |
+| 100 files, fresh mount | ProjFS Workspace | 5 | 297 | 281 | 328 |
+| 100 files, after use | ProjFS Workspace | 5 | 43,469 | 40,875 | 46,688 |
+| 1,000 files, fresh mount | ProjFS Workspace | 5 | 2,672 | 1,828 | 2,891 |
+| 1,000 files, after use | ProjFS Workspace | 5 | 45,594 | 43,562 | 50,750 |
 <!-- end:commit-cpu-medium -->
 
 ### 7.5 Disk and memory
@@ -1249,11 +1257,11 @@ One Workspace, measured after each step of the session in 7.2:
 | after a full listing: content bytes | ProjFS Workspace | 5 | 0.0 | 0.0 | 0.0 |
 | after git status: content bytes | ProjFS Workspace | 5 | 0.1 | 0.1 | 0.1 |
 | after rg: content bytes | ProjFS Workspace | 5 | 4.3 | 4.3 | 4.3 |
-| after rg: volume free space used | ProjFS Workspace | 5 | 64.0 | 63.9 | 64.4 |
+| after rg: volume free space used | ProjFS Workspace | 5 | 64.7 | 58.0 | 68.3 |
 | the copy: content bytes | full directory copy | 5 | 5.4 | 5.4 | 5.4 |
-| the copy: volume free space used | full directory copy | 5 | 12.0 | 11.9 | 12.5 |
+| the copy: volume free space used | full directory copy | 5 | 6.4 | 0.7 | 13.0 |
 | the worktree: content bytes | git worktree | 5 | 4.2 | 4.2 | 4.2 |
-| the worktree: volume free space used | git worktree | 5 | 6.4 | 6.3 | 6.8 |
+| the worktree: volume free space used | git worktree | 5 | 6.9 | 6.4 | 8.7 |
 <!-- end:disk-one-small -->
 
 <!-- begin:disk-count-small -->
@@ -1263,7 +1271,7 @@ One Workspace, measured after each step of the session in 7.2:
 | after a full listing: files with content | ProjFS Workspace | 5 | 0 | 0 | 0 |
 | after git status: files with content | ProjFS Workspace | 5 | 7 | 7 | 7 |
 | after git status: files without content | ProjFS Workspace | 5 | 0 | 0 | 0 |
-| after rg: files with content | ProjFS Workspace | 5 | 1,006 | 1,006 | 1,006 |
+| after rg: files with content | ProjFS Workspace | 5 | 1,007 | 1,007 | 1,007 |
 | after rg: files without content | ProjFS Workspace | 5 | 0 | 0 | 0 |
 <!-- end:disk-count-small -->
 
@@ -1271,13 +1279,13 @@ One Workspace, measured after each step of the session in 7.2:
 | one Workspace on disk (MiB) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
 | after a full listing: content bytes | ProjFS Workspace | 5 | 0.0 | 0.0 | 0.0 |
-| after git status: content bytes | ProjFS Workspace | 5 | 45.4 | 45.4 | 45.4 |
+| after git status: content bytes | ProjFS Workspace | 5 | 44.1 | 44.1 | 44.1 |
 | after rg: content bytes | ProjFS Workspace | 5 | 188.6 | 188.6 | 188.6 |
-| after rg: volume free space used | ProjFS Workspace | 5 | 3,320.6 | 3,317.0 | 3,545.0 |
+| after rg: volume free space used | ProjFS Workspace | 5 | 3,322.8 | 3,318.7 | 3,543.3 |
 | the copy: content bytes | full directory copy | 5 | 189.6 | 189.6 | 189.6 |
-| the copy: volume free space used | full directory copy | 5 | 269.1 | 265.2 | 276.1 |
+| the copy: volume free space used | full directory copy | 5 | 268.9 | 267.7 | 270.2 |
 | the worktree: content bytes | git worktree | 5 | 145.4 | 145.4 | 145.4 |
-| the worktree: volume free space used | git worktree | 5 | 227.9 | 28.1 | 230.4 |
+| the worktree: volume free space used | git worktree | 5 | 229.5 | 221.6 | 236.9 |
 <!-- end:disk-one-medium -->
 
 <!-- begin:disk-count-medium -->
@@ -1285,9 +1293,9 @@ One Workspace, measured after each step of the session in 7.2:
 | --- | --- | ---: | ---: | ---: | ---: |
 | after a full listing: directories | ProjFS Workspace | 5 | 3,790 | 3,790 | 3,790 |
 | after a full listing: files with content | ProjFS Workspace | 5 | 0 | 0 | 0 |
-| after git status: files with content | ProjFS Workspace | 5 | 1,416 | 1,416 | 1,416 |
+| after git status: files with content | ProjFS Workspace | 5 | 211 | 211 | 211 |
 | after git status: files without content | ProjFS Workspace | 5 | 0 | 0 | 0 |
-| after rg: files with content | ProjFS Workspace | 5 | 51,194 | 51,194 | 51,194 |
+| after rg: files with content | ProjFS Workspace | 5 | 51,193 | 51,193 | 51,193 |
 | after rg: files without content | ProjFS Workspace | 5 | 0 | 0 | 0 |
 <!-- end:disk-count-medium -->
 
@@ -1295,9 +1303,9 @@ One Workspace, measured after each step of the session in 7.2:
 disk (counted by the provider for a Workspace, by `Get-ChildItem` for a copy
 or worktree). "Volume free space used" is the volume's free space before
 minus after. It includes everything else the system wrote or freed in that
-time, so one sample can be far off: one worktree sample of the medium
-fixture shows 28 MiB where the others show about 228. Read it as a rough
-cross-check, not as a measurement of one directory.
+time, so one sample can be far off: four copies of the small fixture hold
+21.5 MiB, and their samples show between 102 and 1,502 MiB. Read it as a
+rough cross-check, not as a measurement of one directory.
 
 **A hydrated file holds whole units of 64 KiB on the volume.** The free
 space rows after `rg` show it: far more space is gone than the content
@@ -1360,10 +1368,10 @@ this section show the cost. The observations are asserted by
 `results/allocation-probe.txt`.
 
 A listing alone puts directories on disk and no file content. After
-`git status` on the medium fixture 1,416 files have content, 45.4 MiB. Which
+`git status` on the medium fixture 211 files have content, 44.1 MiB. Which
 files was not listed. The size of `.git` is 44.2 MiB (compare "bytes" and
-"with `.git`" in 7.1), which fits Git reading its own index and pack, and
-the rest the working files it did not trust the times of (7.2).
+"with `.git`" in 7.1), which fits Git reading its own index and pack and,
+in this run, few of the working files (7.2).
 
 1, 4 and 16 Workspaces, each mounted, listed once and `git status` run once,
 against 1, 4 and 16 copies and worktrees:
@@ -1372,88 +1380,86 @@ against 1, 4 and 16 copies and worktrees:
 | 1, 4 and 16 on disk (MiB) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
 | 1 Workspace: content bytes | ProjFS Workspace | 5 | 0.1 | 0.1 | 0.1 |
-| 1 Workspace: volume free space used | ProjFS Workspace | 5 | 0.9 | 0.8 | 0.9 |
+| 1 Workspace: volume free space used | ProjFS Workspace | 5 | 1.4 | 0.7 | 3.5 |
 | 1 copy: content bytes | full directory copy | 5 | 5.4 | 5.4 | 5.4 |
-| 1 copy: volume free space used | full directory copy | 5 | 35.0 | 25.9 | 45.2 |
+| 1 copy: volume free space used | full directory copy | 5 | 29.0 | 14.3 | 32.5 |
 | 1 worktree: content bytes | git worktree | 5 | 4.2 | 4.2 | 4.2 |
-| 1 worktree: volume free space used | git worktree | 5 | 6.9 | 6.4 | 14.9 |
+| 1 worktree: volume free space used | git worktree | 5 | 6.4 | 4.0 | 7.2 |
 | 4 Workspaces: content bytes | ProjFS Workspace | 5 | 0.3 | 0.3 | 0.3 |
-| 4 Workspaces: volume free space used | ProjFS Workspace | 5 | 3.8 | 3.4 | 12.0 |
+| 4 Workspaces: volume free space used | ProjFS Workspace | 5 | 4.8 | 1.1 | 7.9 |
 | 4 copies: content bytes | full directory copy | 5 | 21.5 | 21.5 | 21.5 |
-| 4 copies: volume free space used | full directory copy | 5 | 111.0 | 106.0 | 117.4 |
+| 4 copies: volume free space used | full directory copy | 5 | 641.3 | 102.1 | 1,502.3 |
 | 4 worktrees: content bytes | git worktree | 5 | 16.8 | 16.8 | 16.8 |
-| 4 worktrees: volume free space used | git worktree | 5 | 26.5 | 10.1 | 26.5 |
+| 4 worktrees: volume free space used | git worktree | 5 | 77.9 | 7.0 | 409.4 |
 | 16 Workspaces: content bytes | ProjFS Workspace | 5 | 1.3 | 1.3 | 1.3 |
-| 16 Workspaces: volume free space used | ProjFS Workspace | 5 | 13.7 | 6.8 | 15.3 |
+| 16 Workspaces: volume free space used | ProjFS Workspace | 5 | 224.6 | 77.7 | 614.5 |
 | 16 copies: content bytes | full directory copy | 5 | 86.1 | 86.1 | 86.1 |
-| 16 copies: volume free space used | full directory copy | 5 | 457.3 | 454.3 | 464.9 |
+| 16 copies: volume free space used | full directory copy | 5 | 455.1 | 416.3 | 499.3 |
 | 16 worktrees: content bytes | git worktree | 5 | 67.3 | 67.3 | 67.3 |
-| 16 worktrees: volume free space used | git worktree | 5 | 101.5 | 89.5 | 106.0 |
+| 16 worktrees: volume free space used | git worktree | 5 | 97.5 | 92.5 | 106.0 |
 <!-- end:disk-many-small -->
 
 <!-- begin:disk-many-medium -->
 | 1, 4 and 16 on disk (MiB) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 1 Workspace: content bytes | ProjFS Workspace | 5 | 45.4 | 45.4 | 45.4 |
-| 1 Workspace: volume free space used | ProjFS Workspace | 5 | 138.3 | 129.8 | 138.8 |
+| 1 Workspace: content bytes | ProjFS Workspace | 5 | 44.1 | 44.1 | 44.1 |
+| 1 Workspace: volume free space used | ProjFS Workspace | 5 | 61.3 | 53.8 | 61.5 |
 | 1 copy: content bytes | full directory copy | 5 | 189.6 | 189.6 | 189.6 |
-| 1 copy: volume free space used | full directory copy | 5 | 301.5 | 291.0 | 312.6 |
+| 1 copy: volume free space used | full directory copy | 5 | 289.0 | 285.2 | 297.9 |
 | 1 worktree: content bytes | git worktree | 5 | 145.4 | 145.4 | 145.4 |
-| 1 worktree: volume free space used | git worktree | 5 | 239.6 | 229.8 | 272.4 |
-| 4 Workspaces: content bytes | ProjFS Workspace | 5 | 181.7 | 181.7 | 181.7 |
-| 4 Workspaces: volume free space used | ProjFS Workspace | 5 | 546.8 | 393.2 | 588.0 |
+| 1 worktree: volume free space used | git worktree | 5 | 229.9 | 226.9 | 236.5 |
+| 4 Workspaces: content bytes | ProjFS Workspace | 5 | 176.5 | 176.5 | 176.5 |
+| 4 Workspaces: volume free space used | ProjFS Workspace | 5 | 236.8 | 235.6 | 237.4 |
 | 4 copies: content bytes | full directory copy | 1 | 758.3 | 758.3 | 758.3 |
-| 4 copies: volume free space used | full directory copy | 1 | 1,208.0 | 1,208.0 | 1,208.0 |
+| 4 copies: volume free space used | full directory copy | 1 | 1,172.2 | 1,172.2 | 1,172.2 |
 | 4 worktrees: content bytes | git worktree | 1 | 581.5 | 581.5 | 581.5 |
-| 4 worktrees: volume free space used | git worktree | 1 | 904.6 | 904.6 | 904.6 |
-| 16 Workspaces: content bytes | ProjFS Workspace | 5 | 726.9 | 726.9 | 726.9 |
-| 16 Workspaces: volume free space used | ProjFS Workspace | 5 | 2,197.2 | 2,176.4 | 2,267.4 |
+| 4 worktrees: volume free space used | git worktree | 1 | 912.7 | 912.7 | 912.7 |
+| 16 Workspaces: content bytes | ProjFS Workspace | 5 | 706.1 | 706.1 | 706.1 |
+| 16 Workspaces: volume free space used | ProjFS Workspace | 5 | 960.8 | 590.5 | 1,188.6 |
 | 16 copies: content bytes | full directory copy | 1 | 3,033.1 | 3,033.1 | 3,033.1 |
-| 16 copies: volume free space used | full directory copy | 1 | 5,045.6 | 5,045.6 | 5,045.6 |
+| 16 copies: volume free space used | full directory copy | 1 | 4,972.4 | 4,972.4 | 4,972.4 |
 | 16 worktrees: content bytes | git worktree | 1 | 2,325.9 | 2,325.9 | 2,325.9 |
-| 16 worktrees: volume free space used | git worktree | 1 | 4,548.7 | 4,548.7 | 4,548.7 |
+| 16 worktrees: volume free space used | git worktree | 1 | 3,628.9 | 3,628.9 | 3,628.9 |
 <!-- end:disk-many-medium -->
 
 Workspaces share nothing on disk but the Store, so the cost is linear in
 their number, and each holds only what was looked at. On the medium fixture
-the 4 and 16 copies and worktrees were measured once (`n` = 1), and the
-other session's tests began while the 16 were being made: their "volume
-free space used" includes whatever that session wrote.
+the 4 and 16 copies and worktrees were measured once (`n` = 1).
 
 Provider memory and CPU:
 
 <!-- begin:memory-small -->
 | provider memory, peak working set (MiB) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| right after mount | ProjFS Workspace | 5 | 17.5 | 17.4 | 17.5 |
-| after listing, git status and rg | ProjFS Workspace | 5 | 21.5 | 21.3 | 21.5 |
-| sum over 1 provider, each listed and git status | ProjFS Workspace | 5 | 20.6 | 20.6 | 20.7 |
-| sum over 4 providers, each listed and git status | ProjFS Workspace | 5 | 82.6 | 82.5 | 82.7 |
-| sum over 16 providers, each listed and git status | ProjFS Workspace | 5 | 330.8 | 330.5 | 331.0 |
+| right after mount | ProjFS Workspace | 5 | 17.5 | 17.5 | 18.0 |
+| after listing, git status and rg | ProjFS Workspace | 5 | 21.9 | 21.7 | 21.9 |
+| sum over 1 provider, each listed and git status | ProjFS Workspace | 5 | 21.0 | 21.0 | 21.2 |
+| sum over 4 providers, each listed and git status | ProjFS Workspace | 5 | 84.1 | 84.0 | 84.3 |
+| sum over 16 providers, each listed and git status | ProjFS Workspace | 5 | 337.0 | 336.7 | 337.6 |
 <!-- end:memory-small -->
 
 <!-- begin:memory-medium -->
 | provider memory, peak working set (MiB) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| right after mount | ProjFS Workspace | 5 | 17.6 | 17.6 | 17.7 |
-| after listing, git status and rg | ProjFS Workspace | 5 | 53.7 | 53.2 | 54.1 |
-| sum over 1 provider, each listed and git status | ProjFS Workspace | 5 | 42.0 | 41.5 | 42.2 |
-| sum over 4 providers, each listed and git status | ProjFS Workspace | 5 | 167.3 | 167.0 | 168.3 |
-| sum over 16 providers, each listed and git status | ProjFS Workspace | 5 | 670.2 | 669.7 | 671.4 |
+| right after mount | ProjFS Workspace | 5 | 17.8 | 17.7 | 17.8 |
+| after listing, git status and rg | ProjFS Workspace | 5 | 54.0 | 53.6 | 54.4 |
+| sum over 1 provider, each listed and git status | ProjFS Workspace | 5 | 41.9 | 41.8 | 42.1 |
+| sum over 4 providers, each listed and git status | ProjFS Workspace | 5 | 167.8 | 167.6 | 168.5 |
+| sum over 16 providers, each listed and git status | ProjFS Workspace | 5 | 672.2 | 671.3 | 682.5 |
 <!-- end:memory-medium -->
 
 <!-- begin:cpu-small -->
 | provider CPU time (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| right after mount | ProjFS Workspace | 5 | 15.6 | 15.6 | 31.2 |
-| after listing, git status and rg | ProjFS Workspace | 5 | 1,234 | 1,031 | 1,344 |
+| right after mount | ProjFS Workspace | 5 | 31.2 | 31.2 | 78.1 |
+| after listing, git status and rg | ProjFS Workspace | 5 | 1,281 | 1,062 | 1,578 |
 <!-- end:cpu-small -->
 
 <!-- begin:cpu-medium -->
 | provider CPU time (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| right after mount | ProjFS Workspace | 5 | 31.2 | 31.2 | 46.9 |
-| after listing, git status and rg | ProjFS Workspace | 5 | 48,266 | 48,016 | 54,016 |
+| right after mount | ProjFS Workspace | 5 | 46.9 | 15.6 | 78.1 |
+| after listing, git status and rg | ProjFS Workspace | 5 | 53,562 | 48,703 | 56,109 |
 <!-- end:cpu-medium -->
 
 The provider after a Commit is in 7.4.
@@ -1472,53 +1478,49 @@ comment to `crates\core\main.rs`.
 <!-- begin:build -->
 | cargo build of ripgrep (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| full build | ProjFS Workspace | 5 | 11,232 | 11,144 | 13,724 |
-| full build | full directory copy | 5 | 10,913 | 10,179 | 10,984 |
-| full build | git worktree | 5 | 11,013 | 10,300 | 11,246 |
-| incremental build | ProjFS Workspace | 5 | 2,355 | 2,085 | 2,484 |
-| incremental build | full directory copy | 5 | 1,928 | 1,757 | 1,996 |
-| incremental build | git worktree | 5 | 1,860 | 1,770 | 1,986 |
-| Commit of the Workspace with its target directory | ProjFS Workspace | 5 | 12,236 | 11,904 | 14,512 |
-| discard after the build and Commit | ProjFS Workspace | 5 | 542 | 538 | 656 |
+| full build | ProjFS Workspace | 5 | 12,091 | 11,814 | 14,142 |
+| full build | full directory copy | 5 | 11,205 | 11,009 | 11,785 |
+| full build | git worktree | 5 | 11,430 | 11,013 | 11,621 |
+| incremental build | ProjFS Workspace | 5 | 3,110 | 2,902 | 3,203 |
+| incremental build | full directory copy | 5 | 2,583 | 2,409 | 2,873 |
+| incremental build | git worktree | 5 | 2,605 | 2,543 | 2,649 |
+| Commit of the Workspace with its target directory | ProjFS Workspace | 5 | 10,889 | 10,563 | 12,082 |
+| discard after the build and Commit | ProjFS Workspace | 5 | 542 | 291 | 558 |
 <!-- end:build -->
 
 <!-- begin:build-disk -->
 | after the build (MiB) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Workspace: content bytes on disk | ProjFS Workspace | 5 | 518.0 | 518.0 | 518.0 |
-| Workspace: volume free space used | ProjFS Workspace | 5 | 408.8 | 398.5 | 408.9 |
-| copy: volume free space used by the build | full directory copy | 5 | 398.3 | 392.7 | 401.7 |
-| bytes the Commit read | ProjFS Workspace | 5 | 516.6 | 516.6 | 516.6 |
-| provider peak working set | ProjFS Workspace | 5 | 43.6 | 43.1 | 44.2 |
+| Workspace: content bytes on disk | ProjFS Workspace | 5 | 456.0 | 456.0 | 456.0 |
+| Workspace: volume free space used | ProjFS Workspace | 5 | 374.9 | 354.6 | 383.5 |
+| copy: volume free space used by the build | full directory copy | 5 | 376.2 | 371.8 | 395.1 |
+| bytes the Commit read | ProjFS Workspace | 5 | 454.6 | 454.6 | 454.6 |
+| provider peak working set | ProjFS Workspace | 5 | 44.2 | 43.4 | 45.3 |
 <!-- end:build-disk -->
 
 <!-- begin:build-count -->
 | after the build | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| paths the Commit applied | ProjFS Workspace | 5 | 1,704 | 1,704 | 1,704 |
-| full files on disk | ProjFS Workspace | 5 | 1,621 | 1,621 | 1,621 |
-| provider CPU time (ms) | ProjFS Workspace | 5 | 10,266 | 10,016 | 11,719 |
+| paths the Commit applied | ProjFS Workspace | 5 | 1,408 | 1,408 | 1,408 |
+| full files on disk | ProjFS Workspace | 5 | 1,326 | 1,326 | 1,326 |
+| provider CPU time (ms) | ProjFS Workspace | 5 | 8,922 | 8,734 | 9,609 |
 <!-- end:build-count -->
 
-A full build in a ProjFS Workspace took 11,232 ms, against 10,913 ms in a
-copy and 11,013 ms in a worktree: 2 to 3% more, with a wider spread. The
-incremental build took 2,355 ms against 1,928 ms and 1,860 ms: about a
-quarter more. Build outputs are new files, written straight to NTFS; what
+A full build in a ProjFS Workspace took 12,091 ms, against 11,205 ms in a
+copy and 11,430 ms in a worktree: 6 to 8% more, with a wider spread. The
+incremental build took 3,110 ms against 2,583 ms and 2,605 ms: about a
+fifth more. Build outputs are new files, written straight to NTFS; what
 the provider adds is the hydration of the sources.
 
 The Commit after the build is the expensive line. LayerFS captures the whole
 Workspace, `target` included, so the Commit reads every build output:
-516.6 MiB in 1,704 paths, in about 12 s. That is every byte on disk
-(518.0 MiB), where the run before the second review read 0.81 of them.
-cargo hard-links some of its outputs, and a file the journal marks is now
-compared at every name it has (3.1), so a linked file is read once per
-name. One comparison per file would do when the view holds the names as one
-file; that saving was not built.
-
-Two cautions for this section. The build was made by cargo 1.96.0, whose
-`target` directory is larger than 1.85.1's (1,621 full files against 1,326
-in the earlier runs), so these numbers do not compare with earlier runs'.
-And the other session's tests ran during all of it.
+454.6 MiB in 1,408 paths, in about 11 s. That is every byte on disk
+(456.0 MiB), where the run before the second review, of the same build by
+the same cargo, read 371.3 MiB, 0.81 of them. cargo hard-links some of its
+outputs, and a file the journal marks is now compared at every name it has
+(3.1), so a linked file is read once per name. One comparison per file
+would do when the view holds the names as one file; that saving was not
+built.
 
 ### 7.7 What this says for #454
 
@@ -1527,11 +1529,11 @@ Only what the tables above support:
 - Creating a Workspace is tens of milliseconds at either size, where a copy
   or a worktree of the medium fixture takes tens of seconds. The cost comes
   at first use instead: about 13 s for the first full listing of the medium
-  tree and about 22 s for the first search of it (7.2), and Project Init of
-  that tree took 94 s once (7.1).
+  tree and 21 to 33 s for the first search of it (7.2), and Project Init of
+  that tree took 117 s once (7.1).
 - After that the provider is no longer involved in reading a file, and a
-  full search is a fifth (small fixture) to a quarter (medium) slower than
-  in a copy.
+  full search is a fifth slower than in a copy on the medium fixture and
+  half again as slow on the small one.
 - The cost of a Commit and of a status follows what changed, also after the
   tree was listed and searched (7.4). What the tools did themselves counts
   as a change: Git's index, a build's outputs. A file some process keeps
@@ -1559,20 +1561,25 @@ changed afterwards. All have 0 FAILED rows.
 | `20261118T001312Z` | `bbf880c68`, before the first review | all | The first version's run. Its Commit cases ran only on a fresh mount |
 | `20261119T234349Z` | `cb3b53b90` | Commit, build | That code read the new base's directories at each Commit; removed in `61aa3a4e5` |
 | `20261120T003617Z` | `61aa3a4e5`, after the first review | Commit, build | The second review's fixes changed the tracker and the capture |
-| `20261120T015342Z` | `5c2d1a0ee`, after the second review | all | The fault of 13.3 was found and fixed after it. Built with rustc 1.96.0, like the reported run |
+| `20261120T015342Z` | `5c2d1a0ee`, after the second review | all | The fault of 13.3 was found and fixed after it. Built with rustc 1.96.0, the machine's default, because the launch script did not select a toolchain |
+| `20261120T043817Z` | `d78023836`, before the third review's fix | all | Built with rustc 1.96.0 for the same reason, so its build cases are of cargo 1.96.0's larger `target` directory (1,621 full files against 1,326). Another session ran `cargo test` during its last thirteen minutes |
 
 **How far two runs differ.** The last of these and the reported run are
-both complete, were made hours apart on fresh fixtures, with the same
-compiler, and differ by one commit in the tracker. Over the 141 cases with
-a time in both, the reported run's median is on average (geometric mean)
-1.05 times the earlier one's for the ProjFS Workspace, 1.05 for the copy,
-1.02 for the worktree and 1.00 for the plain directory. Single cases go
-much further, for every setup: creating a worktree of the medium fixture
-took 25.8 s in the earlier run and 16.5 s in this one; copying the small
-fixture 1.5 s and 2.1 s; Project Init of the medium fixture 142 s and 94 s;
-the first `git status` in a Workspace 1.2 s and 2.5 s, for the reason given
-in 7.2. So a difference between two setups in one run that is under a
-factor of about 1.5 is within what the same setup showed between two runs.
+both complete and were made hours apart on fresh fixtures. They differ by
+two commits and by the compiler. Over the 141 cases with a time in both,
+the reported run's median is on average (geometric mean) 1.03 times the
+earlier one's for the ProjFS Workspace, 0.97 for the copy, 0.97 for the
+worktree and 1.02 for the plain directory. The two runs before, which
+share a compiler and differ by one commit, gave 1.05, 1.05, 1.02 and 1.00.
+Single cases go much further, for every setup. Over those three runs:
+creating a worktree of the medium fixture took 25.8 s, 16.5 s and 27.8 s;
+Project Init of the medium fixture 142 s, 94 s and 117 s; the first search
+of the medium Workspace 21.4 s, 21.8 s and 28.2 s; the first `git status`
+in a Workspace 1.2 s, 2.5 s and 1.2 s, for the reason given in 7.2. A
+Commit of 1,000 files of the small fixture after use took 472 ms in the
+run before and 946 ms in this one. So a difference between two setups in
+one run that is under a factor of about 2 is within what the same setup
+showed between two runs.
 
 **Runs that were stopped or measured nothing, after the first review.** Two
 smoke runs of the changed Commit cases checked the script; their output was
@@ -1591,7 +1598,8 @@ for a change after the fix of 13.3; its output was not kept. A run on
 rustc 1.85.1 was started and stopped within two minutes, when the other
 session's tests were seen running; its partial output was not kept. A script then waited for the machine to be quiet
 before starting another, and was stopped before it started anything, when
-the final review round arrived.
+the final review round arrived. The same script, started again after that
+round's commits, made the reported run.
 
 **Discarded runs before that.** Three earlier runs of `run.ps1` were stopped
 before they finished and are not reported. Their partial output was not kept. None was
@@ -1731,8 +1739,8 @@ at `79c119784`, the last commit that changes code or tests; the log is
 | `cargo clippy --locked -p layerfs-projfs --all-targets -- -D warnings` | no finding |
 | `cargo fmt -p layerfs-projfs -- --check` | clean |
 | `python tools/check_product_boundary.py --skip-sdk` | PASS, 861 production files scanned |
-| `bench/run.ps1` | not at this commit. The run of section 7 is of `d78023836`, from a fresh clone: 1,767 rows, 0 FAILED |
-| `bench/compare-commit.ps1` | the last code commit's binary against the one before the reviews (7.4) |
+| `bench/run.ps1` | the run of section 7, in a fresh clone at `59910e101`, which holds the same code and tests: 1,767 rows, 0 FAILED |
+| `bench/compare-commit.ps1` | that run's binary against the one before the reviews (7.4) |
 
 Tests that failed on the way, and what each turned out to be:
 

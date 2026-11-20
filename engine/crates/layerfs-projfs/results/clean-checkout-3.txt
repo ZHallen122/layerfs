@@ -47,7 +47,8 @@ fmt exit: 0
 PASS: scanned 861 production Rust/SQL/JavaScript files; semantic review still required
 dirty after: []
 
-## 2. The benchmark run reported in section 7 of the report: a fresh clone of d78023836, two
+## 2. The benchmark run that section 7 of the report gave until the run recorded in
+##    benchmark-run-20261120T094524Z.txt replaced it: a fresh clone of d78023836, two
 ##    code commits earlier, into an empty work directory. The script did not select a toolchain,
 ##    so the binary was built with the machine's default, rustc 1.96.0 (environment.json of the
 ##    run). Times in brackets are local (UTC-5). Another session began running cargo test in
