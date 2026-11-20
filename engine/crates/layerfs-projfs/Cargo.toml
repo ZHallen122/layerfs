@@ -1,0 +1,36 @@
+[package]
+name = "layerfs-projfs"
+description = "Reference prototype for #454: a LayerFS Workspace mounted on native Windows through the Projected File System (ProjFS). Windows only; an empty library elsewhere."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "layerfs-projfs"
+path = "src/bin/layerfs-projfs.rs"
+
+[target.'cfg(windows)'.dependencies]
+layerfs-content = { path = "../../../core/crates/layerfs-content" }
+layerfs-storage = { path = "../../../core/crates/layerfs-storage" }
+layerfs-history = { path = "../../../core/crates/layerfs-history" }
+layerfs-telemetry = { path = "../../../core/crates/layerfs-telemetry" }
+layerfs-bridge = { path = "../layerfs-bridge" }
+layerfs-overlay = { path = "../layerfs-overlay" }
+layerfs-workspace = { path = "../layerfs-workspace" }
+layerfs-persistence = { path = "../layerfs-persistence" }
+layerfs-project = { path = "../layerfs-project" }
+layerfs-store-service = { path = "../layerfs-store-service" }
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_Storage_ProjectedFileSystem",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_System_LibraryLoader",
+] }
+
+[target.'cfg(windows)'.dev-dependencies]
+blake3 = { version = "=1.8.5", default-features = false }

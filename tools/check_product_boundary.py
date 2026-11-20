@@ -30,6 +30,9 @@ UNSAFE_AUDITED_MODULE = {
     "layerfs-overlay": ("src/database/windows_identity.rs",),
     "layerfs-node": ("src/discovery.rs", "src/discovery_windows.rs"),
     "layerfs-store-service": ("src/windows_acl.rs",),
+    # The #454 Windows ProjFS reference prototype: the ProjFS library's FFI,
+    # and the NTFS change journal and open-by-identity calls.
+    "layerfs-projfs": ("src/sys.rs", "src/ntfs.rs"),
 }
 UNSAFE_FREE_CRATES = (
     "layerfs-content",
@@ -56,6 +59,7 @@ UNSAFE_ROOT_ATTR = {
     "layerfs-api": "#![forbid(unsafe_code)]",
     "layerfs-bridge": "#![forbid(unsafe_code)]",
     "layerfs-sandbox": "#![forbid(unsafe_code)]",
+    "layerfs-projfs": "#![deny(unsafe_code)]",
 }
 
 
@@ -128,6 +132,19 @@ ALLOWED_DEPENDENCIES = {
     },
     "layerfs-bridge": {"layerfs-content", "layerfs-history"},
     "layerfs-sandbox": set(),
+    # The #454 Windows ProjFS reference prototype: a mount over the Store engine.
+    "layerfs-projfs": {
+        "layerfs-content",
+        "layerfs-storage",
+        "layerfs-history",
+        "layerfs-telemetry",
+        "layerfs-bridge",
+        "layerfs-overlay",
+        "layerfs-workspace",
+        "layerfs-persistence",
+        "layerfs-project",
+        "layerfs-store-service",
+    },
 }
 DOMAIN_CRATES = {"layerfs-content", "layerfs-storage", "layerfs-history"}
 LAYER_ORDER = ("core", "engine", "api")
@@ -150,6 +167,7 @@ LAYER = {
     # only the published JavaScript packages, so no crate is in the api layer.
     "layerfs-api": ENGINE,
     "layerfs-node": ENGINE,
+    "layerfs-projfs": ENGINE,
 }
 
 

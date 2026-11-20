@@ -1,0 +1,51 @@
+# The clean-checkout run of 2026-11-20, after the three reviews' fixes. Windows 11 Home
+# 10.0.26200. Log of the driver script as written; the only edit is that the user profile
+# directory in printed paths is written as %USERPROFILE%. Two further sections, the log of
+# a benchmark run that is not reported and the tests made before it, were taken out when
+# the branch was cleaned up. They are in the branch's history at 76e404913, in
+# engine/crates/layerfs-projfs/results/clean-checkout-3.txt.
+
+## The last commit that changes code or tests: a fresh clone, the tests, lint, the format
+## check and the guard. Toolchain 1.85.1.
+
+clean checkout at 79c119784a08bcafa90a128fdf32096749007b53, dirty: []
+toolchain: cargo 1.85.1 (d73d2caf9 2024-12-31) / rustc 1.85.1 (4eb161250 2025-03-15)
+    Finished `test` profile [optimized + debuginfo] target(s) in 58.87s
+     Running unittests src\lib.rs (target\debug\deps\layerfs_projfs-29b44dfc4e6474e4.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src\bin\layerfs-projfs.rs (target\debug\deps\layerfs_projfs-65828aa57856faaa.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\allocation.rs (target\debug\deps\allocation-ea887593739f6774.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+     Running tests\arrivals.rs (target\debug\deps\arrivals-addb106f23c5af27.exe)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 33.91s
+     Running tests\cli.rs (target\debug\deps\cli-834dcabbdca7de0d.exe)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.97s
+     Running tests\content_identity.rs (target\debug\deps\content_identity-3f7de0b3eb888f0d.exe)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests\m0_projection.rs (target\debug\deps\m0_projection-98d3158864951f22.exe)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.43s
+     Running tests\m1_workspace.rs (target\debug\deps\m1_workspace-4a7bad4aa7581063.exe)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.53s
+     Running tests\m2_names.rs (target\debug\deps\m2_names-9b04390c938ad4ee.exe)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+     Running tests\m2_processes.rs (target\debug\deps\m2_processes-6312632bf4070fa1.exe)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.21s
+     Running tests\review_repro.rs (target\debug\deps\review_repro-42c10cc63d736d6c.exe)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.56s
+     Running tests\review_repro2.rs (target\debug\deps\review_repro2-14ed7d9c02404d2b.exe)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.71s
+     Running tests\review_repro3.rs (target\debug\deps\review_repro3-7d717ecf075f9aab.exe)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.67s
+     Running tests\store_smoke.rs (target\debug\deps\store_smoke-d6b2d9901bbf3ca7.exe)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+     Running tests\store_snapshot.rs (target\debug\deps\store_snapshot-1b7c10bf58ca81be.exe)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+     Running tests\tracking.rs (target\debug\deps\tracking-e57211e18186c0e2.exe)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.83s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+tests exit: 0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 16.47s
+fmt exit: 0
+PASS: scanned 861 production Rust/SQL/JavaScript files; semantic review still required
+dirty after: []

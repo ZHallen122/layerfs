@@ -1,0 +1,42 @@
+# Linux before/after check: bench/linux-check.sh with toolchain 1.85.1
+base d34e753d0 head 9a4fee4ca
+
+toolchain: cargo 1.85.1 (d73d2caf9 2024-12-31) / rustc 1.85.1 (4eb161250 2025-03-15) / Linux 6.6.87.1-microsoft-standard-WSL2
+base build exit=0       1     Finished `dev` profile [unoptimized + debuginfo] target(s) ;
+base test-build exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) in 4m 44s;
+base test-layerfs-persistence exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) ;     13 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      2 test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; ;      9 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      5 test res
+base test-layerfs-overlay exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) ;      3 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; ;      2 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      2 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      2 test resu
+base test-layerfs-store-service exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) ;      5 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      3 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;
+base test-layerfs-workspace exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) ;      2 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      3 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test re
+base test-layerfs-project exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) ;      4 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      4 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;
+base guard exit=0       1 PASS: scanned 827 production Rust/SQL/JavaScript files; semantic review still required;
+base guard-tests exit=0       1 OK;      1 Ran 157 tests ;
+base fmt exit=0 
+base clippy exit=0       1     Finished `dev` profile [unoptimized + debuginfo] target(s) ;
+head build exit=0       1     Finished `dev` profile [unoptimized + debuginfo] target(s) ;
+head test-build exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) in 4m 31s;
+head test-layerfs-persistence exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) ;     13 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      2 test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; ;      9 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      5 test res
+head test-layerfs-overlay exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) ;      3 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; ;      2 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      2 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      2 test resu
+head test-layerfs-store-service exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) ;      5 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      3 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;
+head test-layerfs-workspace exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) ;      2 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      3 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test re
+head test-layerfs-project exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) ;      4 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      4 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;      1 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;
+head guard exit=0       1 PASS: scanned 856 production Rust/SQL/JavaScript files; semantic review still required;
+head guard-tests exit=0       1 OK;      1 Ran 157 tests ;
+head fmt exit=0 
+head clippy exit=0       1     Finished `dev` profile [unoptimized + debuginfo] target(s) ;
+head test-layerfs-projfs exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) ;     11 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;
+head clippy-projfs exit=0       1     Finished `dev` profile [unoptimized + debuginfo] target(s) ;
+done
+exit=0
+
+# tests passed/failed/ignored per package and side
+base layerfs-persistence passed=99 failed=0 ignored=2
+base layerfs-overlay passed=79 failed=0 ignored=1
+base layerfs-store-service passed=6 failed=0 ignored=0
+base layerfs-workspace passed=176 failed=0 ignored=0
+base layerfs-project passed=22 failed=0 ignored=0
+head layerfs-persistence passed=99 failed=0 ignored=2
+head layerfs-overlay passed=79 failed=0 ignored=1
+head layerfs-store-service passed=6 failed=0 ignored=0
+head layerfs-workspace passed=176 failed=0 ignored=0
+head layerfs-project passed=22 failed=0 ignored=0

@@ -1,0 +1,25 @@
+bench/allocation-check.ps1 on the small fixture, 2026-11-18, release binary built from the same product
+source as the benchmark's (commit bbf880c68), Defender real-time scanning on.
+A diagnostic, one pass, not a benchmark.
+
+volume C: cluster size 4096 bytes
+
+1. after rg read every file
+volume free space used: 66633728 bytes
+Workspace, hydrated: files=1000 content_bytes=4411999 allocated_bytes=65536000 (1000 files hold 16 clusters)
+plain source tree:   files=1000 content_bytes=4411999 allocated_bytes=6385664 (559 files hold 2 clusters; 441 files hold 1 clusters)
+provider usage: {"directories":315,"placeholders":0,"hydrated":1001,"full":0,"bytes":4412239}
+
+2. are hydrated files sparse?
+dir00\file00.rs: This file is NOT set as sparse
+dir00\file01.rs: This file is NOT set as sparse
+dir00\file02.rs: This file is NOT set as sparse
+
+3. every file opened for writing by this process, nothing written, closed
+opens refused: 0
+volume free space used: 8667136 bytes
+Workspace: files=1000 content_bytes=4411999 allocated_bytes=6385664 (559 files hold 2 clusters; 441 files hold 1 clusters)
+provider usage: {"directories":315,"placeholders":0,"hydrated":1,"full":1000,"bytes":4412239}
+provider status: {"branch":"work","head":null,"root":"651ff05459807bfbb7f42886dbfc54b7dc28ac35e7c0f74ad5b243b1f842d563","changes":[],"hidden":[]}
+
+volume free space used after discard: 5324800 bytes
