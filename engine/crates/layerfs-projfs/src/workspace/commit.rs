@@ -129,12 +129,16 @@ fn rebase(
     let _local = projection.provider().local_only();
     let mut local = Local::new(projection.root());
     let wrap = |e: &dyn std::fmt::Display| WorkspaceError::Failed(format!("baseline update: {e}"));
+    // The record holds files of earlier Commits only: this Commit's are
+    // added after this update. For each, the old base's entry is what this
+    // Workspace committed.
     for (path, stored) in ledger.files() {
-        let held = match new.resolve(&path).map_err(|e| wrap(&e))? {
-            Some(Found::Entry { entry, .. }) => !entry.directory && entry.content == stored.content,
-            _ => false,
+        let entry = |tree: &Tree| match tree.resolve(&path) {
+            Ok(Some(Found::Entry { entry, .. })) => Ok(Some(entry)),
+            Ok(_) => Ok(None),
+            Err(error) => Err(wrap(&error)),
         };
-        if held {
+        if entry(old)? == entry(new)? {
             continue;
         }
         // The Branch holds something else at this path now. What this
@@ -250,7 +254,7 @@ impl Workspace {
     /// Records what the published Commit stored for the files the capture
     /// read, and clears the tombstones of the names it removed.
     fn settle(&self, ledger: &mut Ledger, captured: &Captured) {
-        let (tree, root) = (&self.projection.provider().tree, self.projection.root());
+        let root = self.projection.root();
         for path in &captured.removed {
             ledger.forget(path);
             // The deletion is committed: the base no longer holds the name,
@@ -268,20 +272,17 @@ impl Workspace {
                 ledger.tombstone(path);
             }
         }
+        // No tree is read for this: the size, time and journal number a
+        // file had when the capture read it are the whole record.
         for seen in &captured.files {
-            if let Ok(Some(Found::Entry { entry, .. })) = tree.resolve(&seen.path) {
-                if !entry.directory {
-                    ledger.record(
-                        &seen.path,
-                        Stored {
-                            size: seen.size,
-                            written: seen.written,
-                            change: seen.change,
-                            content: entry.content,
-                        },
-                    );
-                }
-            }
+            ledger.record(
+                &seen.path,
+                Stored {
+                    size: seen.size,
+                    written: seen.written,
+                    change: seen.change,
+                },
+            );
         }
     }
 

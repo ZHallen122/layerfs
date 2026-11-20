@@ -7,11 +7,11 @@
 //! and compared at every question, it cannot follow the Branch when a merge
 //! changes it, and after a restart it looks like an uncommitted change. The
 //! record holds, for each such file, the size, the time and the number of
-//! its newest change journal record when the Commit read it, and the
-//! identity of the content the Store then held at its path. A file for
-//! which all three are still the same is the committed one. The journal
-//! number is what makes that exact: every journaled change moves it, also
-//! one that leaves size and time alone.
+//! its newest change journal record when the Commit read it. A file for
+//! which all three are still the same is the committed one, and so equals
+//! what the base held at its path when it was recorded. The journal number
+//! is what makes that exact: every journaled change moves it, also one that
+//! leaves size and time alone.
 //!
 //! The record is asked only where the change journal cannot answer for a
 //! stretch of time, and when a merge has to decide whether a committed
@@ -34,8 +34,6 @@ pub struct Stored {
     pub written: i64,
     /// The number of the file's newest change journal record.
     pub change: i64,
-    /// The Store's identity of the bytes.
-    pub content: Vec<u8>,
 }
 
 /// The record of one Workspace.
@@ -48,20 +46,6 @@ pub struct Ledger {
 
 fn folded(path: &str) -> String {
     path.to_lowercase()
-}
-
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-    bytes.iter().fold(String::new(), |mut text, byte| {
-        let _ = write!(text, "{byte:02x}");
-        text
-    })
-}
-
-fn unhex(text: &str) -> Option<Vec<u8>> {
-    (0..text.len() / 2)
-        .map(|at| u8::from_str_radix(text.get(at * 2..at * 2 + 2)?, 16).ok())
-        .collect()
 }
 
 impl Stored {
@@ -83,15 +67,14 @@ impl Ledger {
             return ledger;
         };
         for line in text.lines() {
-            let fields: Vec<&str> = line.splitn(6, '\t').collect();
+            let fields: Vec<&str> = line.splitn(5, '\t').collect();
             match fields.as_slice() {
-                ["F", size, written, change, content, path] => {
+                ["F", size, written, change, path] => {
                     let stored = (|| {
                         Some(Stored {
                             size: size.parse().ok()?,
                             written: written.parse().ok()?,
                             change: change.parse().ok()?,
-                            content: unhex(content)?,
                         })
                     })();
                     if let Some(stored) = stored {
@@ -112,11 +95,8 @@ impl Ledger {
         let mut text = String::new();
         for (path, stored) in self.files.values() {
             text.push_str(&format!(
-                "F\t{}\t{}\t{}\t{}\t{path}\n",
-                stored.size,
-                stored.written,
-                stored.change,
-                hex(&stored.content)
+                "F\t{}\t{}\t{}\t{path}\n",
+                stored.size, stored.written, stored.change
             ));
         }
         for path in &self.tombstones {

@@ -24,6 +24,10 @@ two marker lines, and the report has no marker without a table.
 takes the Commit, status and build tables from a second run (one made with
 `run.ps1 -Cases commits,builds`), and everything else from the first. The
 second run's own identity is the table `environment-commits`.
+
+    ... --compare <directory of compare-commit.ps1 CSV files> ...
+
+adds the table `compare`: two builds on the same Commit, turn and turn about.
 """
 
 import csv
@@ -106,7 +110,7 @@ def merged(rows, keys):
     return values
 
 
-def sections(directory, commits=None):
+def sections(directory, commits=None, compare=None):
     rows, failed = load(directory)
     environment = json.loads((directory / "environment.json").read_text(encoding="utf-8-sig"))
     fixtures = json.loads((directory / "fixtures.json").read_text(encoding="utf-8-sig"))
@@ -381,6 +385,19 @@ def sections(directory, commits=None):
         ],
         whole,
     )
+    if compare is not None:
+        lines = ["| the same Commit by two builds (ms) | build | n | median | min | max |", "| --- | --- | ---: | ---: | ---: | ---: |"]
+        samples = defaultdict(list)
+        for path in sorted(compare.glob("*.csv")):
+            with open(path, encoding="utf-8-sig", newline="") as source:
+                for row in csv.DictReader(source):
+                    for metric in ("wall_ms", "status_after_ms"):
+                        samples[(int(row["files"]), metric, row["build"])].append(float(row[metric]))
+        labels = {"wall_ms": "Commit, {} changed", "status_after_ms": "status after the Commit of {}"}
+        builds = {"old": "before the review", "new": "after the review"}
+        for (count, metric, build), values in sorted(samples.items(), key=lambda item: (item[0][0], item[0][1] != "wall_ms", item[0][2] != "old")):
+            lines.append(f"| {labels[metric].format(files(count))} | {builds[build]} | {cells(values, milliseconds)} |")
+        out["compare"] = chr(10).join(lines)
     total = sum(failed.values())
     counted = sum(len(v) for v in rows.values()) + (sum(len(v) for v in second.values()) if second else 0)
     out["failed"] = (
@@ -397,7 +414,8 @@ def marked(name):
 def main():
     directory = Path(sys.argv[1])
     commits = Path(sys.argv[sys.argv.index("--commits") + 1]) if "--commits" in sys.argv else None
-    made = sections(directory, commits)
+    compare = Path(sys.argv[sys.argv.index("--compare") + 1]) if "--compare" in sys.argv else None
+    made = sections(directory, commits, compare)
     for mode in ("--fill", "--check"):
         if mode not in sys.argv:
             continue
