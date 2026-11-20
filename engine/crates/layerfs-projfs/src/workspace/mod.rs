@@ -5,6 +5,7 @@ pub mod follow;
 pub mod ledger;
 pub mod mount;
 pub mod record;
+pub mod unfollowed;
 
 pub use capture::{CaptureError, Captured};
 pub use commit::{CommitRefusal, Committed, Outcome};

@@ -64,6 +64,10 @@ pub struct Captured {
     pub held: Vec<u64>,
     /// Full files whose bytes the view now holds, as they were when read.
     pub files: Vec<Seen>,
+    /// Every file whose bytes were compared with the view, and so equal it
+    /// now: those of `files` and `live`, and those whose journal changes
+    /// are not closed.
+    pub compared: Vec<String>,
     /// Paths removed from the view: deleted, or renamed away.
     pub removed: Vec<String>,
     /// Junctions and symbolic links found on disk. They are never followed
@@ -611,6 +615,7 @@ impl Capture<'_, '_> {
             })?;
             changed = true;
         }
+        self.done.compared.push(path.to_owned());
         if live {
             if stamp(&file)? != before {
                 return Err(CaptureError::Unstable(path.to_owned()));

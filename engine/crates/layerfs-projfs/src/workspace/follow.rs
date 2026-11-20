@@ -21,9 +21,15 @@
 //! tree the directory showed. A file that holds something else changed
 //! after the capture read it: it is left alone and named.
 //!
+//! An item that cannot be brought over (another process holds the file,
+//! ProjFS will not update the placeholder) is reported as refused. The
+//! caller keeps such paths (`unfollowed.rs`) and has them tried again by
+//! [`retry`]; this step leaves a path alone that is already on that list.
+//!
 //! Work follows the items on disk, never the tree.
 use super::ledger::{Ledger, Stored};
 use super::mount::{Workspace, WorkspaceError};
+use super::unfollowed::Unfollowed;
 use crate::ntfs::Sessions;
 use crate::provider::serve::basic_info;
 use crate::provider::tree::{join, Directory, Found, Tree};
@@ -38,6 +44,7 @@ use std::sync::Arc;
 
 /// Bytes copied per step.
 const WINDOW: usize = 1 << 20;
+const SHARING_VIOLATION: i32 = 32;
 const SHARE_ALL: u32 = 7;
 const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 
@@ -104,40 +111,89 @@ fn read_only(native: &Path, on: bool) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Writes the bytes `source` holds for `entry`, listed at `listed`, to the
+/// Why a file could not be written, and whether it was changed at all.
+struct Unwritten {
+    error: std::io::Error,
+    /// The file was opened for the new bytes and may hold a part of them.
+    touched: bool,
+}
+
+/// Fills the file at `path` with the bytes `source` holds for `entry`.
+fn fill(path: &Path, source: &dyn Source, listed: &str, entry: &Entry) -> std::io::Result<()> {
+    let mut file = std::fs::File::create(path)?;
+    let mut buffer = vec![0u8; WINDOW.min(entry.size as usize).max(1)];
+    let mut offset = 0u64;
+    while offset < entry.size {
+        let step = ((entry.size - offset) as usize).min(buffer.len());
+        source
+            .read(listed, &entry.content, offset, &mut buffer[..step])
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        file.write_all(&buffer[..step])?;
+        offset += step as u64;
+    }
+    Ok(())
+}
+
+/// Writes the bytes `source` holds for `entry`, listed at `listed`, into the
 /// file at `native`, and returns what the file then is.
+///
+/// The file is written in place, so it stays the same file: a process that
+/// has it open or mapped keeps seeing it, and a file that may not be
+/// written while it is mapped is refused instead of replaced under the
+/// mapping. So that the Store cannot fail halfway through, the bytes are
+/// first fetched whole into `scratch`, a file in the state directory.
 fn write(
     native: &Path,
+    scratch: &Path,
     source: &dyn Source,
     listed: &str,
     entry: &Entry,
     sessions: Option<&Sessions>,
-) -> std::io::Result<Option<Stored>> {
+) -> Result<Option<Stored>, Unwritten> {
+    let untouched = |error| Unwritten {
+        error,
+        touched: false,
+    };
     if let Some(parent) = native.parent() {
-        std::fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent).map_err(untouched)?;
     }
-    if native.exists() {
-        read_only(native, false)?;
-    }
-    {
-        let mut file = std::fs::File::create(native)?;
-        let mut buffer = vec![0u8; WINDOW.min(entry.size as usize).max(1)];
-        let mut offset = 0u64;
-        while offset < entry.size {
-            let step = ((entry.size - offset) as usize).min(buffer.len());
-            source
-                .read(listed, &entry.content, offset, &mut buffer[..step])
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
-            file.write_all(&buffer[..step])?;
-            offset += step as u64;
+    fill(scratch, source, listed, entry).map_err(|error| {
+        let _ = std::fs::remove_file(scratch);
+        untouched(error)
+    })?;
+    let locked =
+        std::fs::symlink_metadata(native).is_ok_and(|metadata| metadata.permissions().readonly());
+    let copied = (|| {
+        if locked {
+            read_only(native, false).map_err(untouched)?;
         }
+        let mut from = std::fs::File::open(scratch).map_err(untouched)?;
+        let mut into = std::fs::File::create(native).map_err(untouched)?;
+        std::io::copy(&mut from, &mut into)
+            .map(drop)
+            .map_err(|error| Unwritten {
+                error,
+                touched: true,
+            })
+    })();
+    let _ = std::fs::remove_file(scratch);
+    if let Err(unwritten) = copied {
+        if locked && !unwritten.touched {
+            let _ = read_only(native, true);
+        }
+        return Err(unwritten);
     }
-    if entry.attributes & attribute::READ_ONLY != 0 {
-        read_only(native, true)?;
-    }
-    // Read once the writing handle is closed: the close is then the file's
-    // newest change journal record, unless another process has it open.
-    stamp(native, sessions)
+    let finish = || -> std::io::Result<Option<Stored>> {
+        if entry.attributes & attribute::READ_ONLY != 0 {
+            read_only(native, true)?;
+        }
+        // Read once the writing handle is closed: the close is then the
+        // file's newest change journal record, unless another process has
+        // it open.
+        stamp(native, sessions)
+    };
+    // The bytes are in place; without the rest nothing vouches for the file.
+    Ok(finish().unwrap_or(None))
 }
 
 struct Follow<'a> {
@@ -159,6 +215,11 @@ const EVERY: i32 = PLACEHOLDER | sys::ALLOW_DIRTY_DATA | sys::ALLOW_TOMBSTONE;
 impl Follow<'_> {
     fn root(&self) -> &Path {
         self.workspace.projection.root()
+    }
+
+    /// Where a file's new bytes are written before they are moved in.
+    fn scratch(&self) -> std::path::PathBuf {
+        self.workspace.projection.state().join("follow.tmp")
     }
 
     /// Enters a file this step wrote into the record, or takes it out when
@@ -184,6 +245,7 @@ impl Follow<'_> {
             if !entry.directory {
                 match write(
                     &native,
+                    &self.scratch(),
                     self.now.as_ref(),
                     &listed,
                     &entry,
@@ -193,7 +255,14 @@ impl Follow<'_> {
                         self.note(&path, stored);
                         self.done.written += 1;
                     }
-                    Err(error) => self.refuse(&path, error),
+                    Err(unwritten) => {
+                        // Nothing stood here before: a part of a file is
+                        // worse than none.
+                        if unwritten.touched {
+                            let _ = std::fs::remove_file(&native);
+                        }
+                        self.refuse(&path, unwritten.error);
+                    }
                 }
                 continue;
             }
@@ -269,6 +338,14 @@ impl Follow<'_> {
             return Ok(());
         }
         let native = native(self.root(), path);
+        // A file nobody else may read cannot be compared: what it holds is
+        // not known, which is neither "as captured" nor "changed since".
+        if let Err(error) = std::fs::File::open(&native) {
+            if error.raw_os_error() == Some(SHARING_VIOLATION) {
+                self.refuse(path, error);
+                return Ok(());
+            }
+        }
         let captured = match was {
             Some((directory, was)) if !was.directory => {
                 self.stamps.vouches(&native, path, item)
@@ -305,6 +382,7 @@ impl Follow<'_> {
             Some((directory, now)) => {
                 match write(
                     &native,
+                    &self.scratch(),
                     self.now.as_ref(),
                     &join(directory, &now.name),
                     now,
@@ -314,7 +392,25 @@ impl Follow<'_> {
                         self.note(path, stored);
                         self.done.replaced += 1;
                     }
-                    Err(error) => self.refuse(path, error),
+                    Err(unwritten) if unwritten.touched => {
+                        // Part of the new bytes may be in the file. What it
+                        // held is known, so it is put back: the next
+                        // Commit must not take the part for a change.
+                        let restored = match was {
+                            Some((directory, was)) => {
+                                fill(&native, self.was.as_ref(), &join(directory, &was.name), was)
+                                    .is_ok()
+                            }
+                            None => false,
+                        };
+                        let state = if restored {
+                            "it holds the old bytes again"
+                        } else {
+                            "it may hold a part of the new bytes"
+                        };
+                        self.refuse(path, format!("{}; {state}", unwritten.error));
+                    }
+                    Err(unwritten) => self.refuse(path, unwritten.error),
                 }
             }
             None => {
@@ -372,6 +468,7 @@ pub(super) fn follow(
     shown: &Tree,
     target: &Tree,
     stamps: &mut Ledger,
+    behind: &Unfollowed,
 ) -> Result<Rebased, WorkspaceError> {
     let projection = &workspace.projection;
     let wrap = |e: &dyn std::fmt::Display| WorkspaceError::Failed(format!("baseline update: {e}"));
@@ -421,6 +518,12 @@ pub(super) fn follow(
                 continue;
             }
             if before.as_ref().map(|(_, entry)| entry) == after.as_ref().map(|(_, entry)| entry) {
+                continue;
+            }
+            // Still showing an older tree than `shown`: an earlier merge
+            // could not bring it over. It is retried from the tree it
+            // shows, not judged against this one.
+            if behind.holds(&path) {
                 continue;
             }
             follow.file(
@@ -479,6 +582,67 @@ pub(super) fn follow(
         {
             follow.arrive(&path, &listed, &entry);
         }
+    }
+    Ok(follow.done)
+}
+
+/// Tries again to bring `paths` from the tree `shown`, which each of them
+/// still shows on disk, to `target`. A path that is brought over, or that
+/// holds the target's bytes already, is neither refused nor kept in the
+/// answer; a path that still cannot be changed is refused again; a path
+/// that holds something else is kept.
+pub(super) fn retry(
+    workspace: &Workspace,
+    shown: &Tree,
+    target: &Tree,
+    paths: &[String],
+    stamps: &mut Ledger,
+) -> Result<Rebased, WorkspaceError> {
+    let projection = &workspace.projection;
+    let wrap = |e: &dyn std::fmt::Display| WorkspaceError::Failed(format!("baseline update: {e}"));
+    let _local = projection.provider().local_only();
+    let mut follow = Follow {
+        workspace,
+        target,
+        was: shown.source(),
+        now: target.source(),
+        local: Local::new(projection.root()),
+        stamps,
+        sessions: Sessions::open(projection.root()).ok(),
+        done: Rebased::default(),
+    };
+    for path in paths {
+        let parent = path.rsplit_once('/').map_or("", |(parent, _)| parent);
+        let name = path.rsplit('/').next().unwrap_or(path);
+        let side = |tree: &Tree| -> Result<Option<(String, Entry)>, WorkspaceError> {
+            Ok(directory(tree, parent)
+                .map_err(|e| wrap(&e))?
+                .and_then(|(listed, held)| held.find(name).map(|entry| (listed, entry.clone()))))
+        };
+        let (before, after) = (side(shown)?, side(target)?);
+        let projected = follow.projected(parent)?;
+        let Some((spelled, item)) = follow.local.find(path).map_err(|e| wrap(&e))? else {
+            // Nothing on disk: the name is projected from the tree served
+            // now, unless ProjFS projects nothing into its directory.
+            if let (false, Some((listed, entry))) = (projected, &after) {
+                follow.arrive(path, &join(listed, &entry.name), entry);
+            }
+            continue;
+        };
+        if item.directory || item.link() {
+            continue;
+        }
+        follow.file(
+            &spelled,
+            &item,
+            before
+                .as_ref()
+                .map(|(listed, entry)| (listed.as_str(), entry)),
+            after
+                .as_ref()
+                .map(|(listed, entry)| (listed.as_str(), entry)),
+            projected,
+        )?;
     }
     Ok(follow.done)
 }

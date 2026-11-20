@@ -11,7 +11,7 @@
 //! reach the local directory the same way, for the user to resolve, as a
 //! FUSE mount would show them.
 use super::capture::{capture, CaptureError, Captured};
-use super::follow::{follow, Rebased};
+use super::follow::{follow, retry, Rebased};
 use super::ledger::{Ledger, Stored};
 use super::mount::{Workspace, WorkspaceError};
 use crate::provider::tree::Tree;
@@ -110,9 +110,21 @@ fn told(rebased: &Rebased) -> Vec<String> {
         )
     });
     let refused = rebased.refused.iter().map(|(path, why)| {
-        format!("{path} could not be brought to the new base ({why}): it shows the old one")
+        format!(
+            "{path} could not be brought to the new base ({why}): it shows the old one. \
+             Status lists it as behind, and every status and Commit tries again"
+        )
     });
     kept.chain(refused).collect()
+}
+
+/// What a Commit says of a path that is still behind when it begins.
+fn still_behind(path: &str) -> String {
+    format!(
+        "{path} still shows an older version than the Branch holds: an earlier merge could \
+         not rewrite it, and neither could this Commit. It is tried again at every status \
+         and Commit; do not edit it before"
+    )
 }
 
 impl Workspace {
@@ -162,7 +174,82 @@ impl Workspace {
     ) -> Result<Rebased, WorkspaceError> {
         let shown = Tree::new(self.source_at(shown)?);
         let target = Tree::new(self.source_at(installed)?);
-        follow(self, &shown, &target, stamps)
+        let behind = self
+            .unfollowed
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        follow(self, &shown, &target, stamps, &behind)
+    }
+
+    /// Tries again every path an earlier merge could not bring over, and
+    /// returns the paths that are still behind. A path leaves the list when
+    /// the item on disk holds the bytes of the tree it has to reach.
+    pub(super) fn catch_up(&self, stamps: &mut Ledger) -> Vec<String> {
+        let mut list = self
+            .unfollowed
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if list.is_empty() {
+            return Vec::new();
+        }
+        for ((shown, target), paths) in list.groups() {
+            let tried = (|| {
+                let shown =
+                    Tree::new(self.source_at(super::mount::root_of(&shown, "shown root")?)?);
+                let target =
+                    Tree::new(self.source_at(super::mount::root_of(&target, "target root")?)?);
+                retry(self, &shown, &target, &paths, stamps)
+            })();
+            // A tree that cannot be read now is tried again next time.
+            let Ok(tried) = tried else { continue };
+            for path in &paths {
+                let stays = tried
+                    .kept
+                    .iter()
+                    .any(|kept| kept.eq_ignore_ascii_case(path))
+                    || tried
+                        .refused
+                        .iter()
+                        .any(|(refused, _)| refused.eq_ignore_ascii_case(path));
+                if !stays {
+                    list.remove(path);
+                }
+            }
+        }
+        // Best effort: a list that is not written is tried from the older
+        // one, which finds these paths brought over.
+        let _ = list.save(self.projection.state());
+        list.paths()
+    }
+
+    /// Keeps the list of paths that are behind true to a Commit: what the
+    /// capture compared equals the view and is no longer behind; after a
+    /// merge every path still behind has to reach the installed tree, and
+    /// what the merge step could not change joins the list.
+    fn unfollow(
+        &self,
+        replaced: Option<(ObjectId, ObjectId)>,
+        captured: &Captured,
+        rebased: &Rebased,
+    ) -> std::io::Result<()> {
+        let mut list = self
+            .unfollowed
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if list.is_empty() && rebased.refused.is_empty() {
+            return Ok(());
+        }
+        for path in captured.removed.iter().chain(&captured.compared) {
+            list.remove(path);
+        }
+        if let Some((shown, installed)) = replaced {
+            let (shown, installed) = (hex(shown.as_bytes()), hex(installed.as_bytes()));
+            list.retarget(&installed);
+            for (path, _) in &rebased.refused {
+                list.add(path, &shown, &installed);
+            }
+        }
+        list.save(self.projection.state())
     }
 
     /// Enters what the capture read into `stamps`: each file as it was when
@@ -222,19 +309,25 @@ impl Workspace {
         if let Some(why) = self.behind() {
             return Err(CommitRefusal::Behind(why));
         }
-        let recorded = self.projection.provider().journal.recorded();
-        // Everything before the taken position in the change journal is in
-        // `taken`; what comes after stays with the tracker.
-        let taken = self.projection.watch().take();
         let mut ledger = self
             .ledger
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
+        // First what an earlier merge left behind: a file brought over now
+        // is not an old file the capture could take for a change.
+        let behind = self.catch_up(&mut ledger);
+        let recorded = self.projection.provider().journal.recorded();
+        // Everything before the taken position in the change journal is in
+        // `taken`; what comes after stays with the tracker.
+        let taken = self.projection.watch().take();
         let mut published = self.publish(message, &recorded, &taken.pending, &mut ledger);
         match &mut published {
             // Published: a failure from here on does not undo it, and is
             // told beside it instead of in its place.
             Ok(committed) => {
+                committed
+                    .warnings
+                    .extend(behind.iter().map(|path| still_behind(path)));
                 // A file the capture found open for writing stays suspect:
                 // its handle may write again without a journal record.
                 let kept = self
@@ -338,6 +431,12 @@ impl Workspace {
             }
         };
         warnings.extend(told(&rebased));
+        if let Err(error) = self.unfollow(success.replaced, &captured, &rebased) {
+            warnings.push(format!(
+                "the list of paths that are behind was not written ({error}): after a \
+                 restart they are not tried again"
+            ));
+        }
         let Some(history) = success.history else {
             let merge = success.merge.unwrap_or_else(unreachable_merge);
             return Err(CommitRefusal::Conflict {

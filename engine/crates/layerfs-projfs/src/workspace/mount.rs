@@ -4,6 +4,7 @@
 //! mount inside a Sandbox, and needs no container.
 use super::ledger::Ledger;
 use super::record::Record;
+use super::unfollowed::Unfollowed;
 use crate::projection::{MountError, Projection};
 use crate::source::snapshot::SnapshotSource;
 use crate::store::{Engine, EngineError};
@@ -96,6 +97,12 @@ pub struct Status {
     /// the recorded base and the Branch's present head. The directory still
     /// shows the recorded base, and Commit is refused.
     pub diverged: Option<(String, String)>,
+    /// Paths that still show an older version than the Branch holds: a
+    /// merge could not rewrite them (another process held the file). They
+    /// are no uncommitted change, and must not be edited as they are. Each
+    /// status and Commit tries to bring them over; they are also in
+    /// `hidden`, with the reason.
+    pub behind: Vec<String>,
 }
 
 /// The default state directory of a mount at `root`.
@@ -122,9 +129,11 @@ pub struct Workspace {
     /// Set when the directory could not follow a base the engine
     /// installed: Commit is refused until a resume finished the step.
     pub(super) behind: Mutex<Option<String>>,
+    /// The paths a merge could not bring over.
+    pub(super) unfollowed: Mutex<Unfollowed>,
 }
 
-fn root_of(text: &str, what: &str) -> Result<ObjectId, WorkspaceError> {
+pub(super) fn root_of(text: &str, what: &str) -> Result<ObjectId, WorkspaceError> {
     unhex(text)
         .and_then(|bytes| ObjectId::from_bytes(&bytes).ok())
         .ok_or_else(|| WorkspaceError::Failed(format!("recorded {what}")))
@@ -207,7 +216,19 @@ impl Workspace {
             .ledger
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        self.follow(shown, target, &mut ledger)?;
+        let rebased = self.follow(shown, target, &mut ledger)?;
+        if !rebased.refused.is_empty() {
+            let mut list = self
+                .unfollowed
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            for (path, _) in &rebased.refused {
+                list.add(path, &record.shown, &record.target);
+            }
+            list.save(self.projection.state()).map_err(|error| {
+                WorkspaceError::Failed(format!("list of paths behind: {error}"))
+            })?;
+        }
         // Kept as recorded but for the step: after a restart that found the
         // Branch moved, the record is not this binding's to rewrite.
         Record {
@@ -261,9 +282,12 @@ impl Workspace {
                 });
             }
         };
-        let ledger = match resumed {
-            Some(_) => Ledger::load(projection.state()),
-            None => Ledger::default(),
+        let (ledger, unfollowed) = match resumed {
+            Some(_) => (
+                Ledger::load(projection.state()),
+                Unfollowed::load(projection.state()),
+            ),
+            None => (Ledger::default(), Unfollowed::default()),
         };
         let workspace = Self {
             engine: engine.clone(),
@@ -275,6 +299,7 @@ impl Workspace {
             ledger: Mutex::new(ledger),
             diverged,
             behind: Mutex::new(None),
+            unfollowed: Mutex::new(unfollowed),
         };
         // A resumed Workspace's record is rewritten once its unfinished
         // step, if it has one, is done.
@@ -347,21 +372,32 @@ impl Workspace {
             .bound
             .snapshot()
             .map_err(|e| WorkspaceError::Failed(format!("binding: {e}")))?;
-        let report = {
-            let ledger = self
+        let (report, behind) = {
+            let mut ledger = self
                 .ledger
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner());
+            // What an earlier merge could not bring over is tried first, so
+            // that what follows describes the directory as it then is.
+            let behind = self.catch_up(&mut ledger);
             let root = self.projection.root();
-            self.projection.report(&|path: &str, item: &LocalItem| {
+            let report = self.projection.report(&|path: &str, item: &LocalItem| {
                 ledger.vouches(&crate::track::local::native(root, path), path, item)
-            })?
+            })?;
+            (report, behind)
         };
         let mut hidden = self.projection.provider().tree.hidden();
         hidden.extend(report.links.into_iter().map(|path| {
             (
                 path,
                 "a junction or symbolic link: never followed, not committed",
+            )
+        }));
+        hidden.extend(behind.iter().map(|path| {
+            (
+                path.clone(),
+                "behind the Branch: a merge could not rewrite it; tried again at every status \
+                 and Commit",
             )
         }));
         Ok(Status {
@@ -371,6 +407,7 @@ impl Workspace {
             changes: report.changes,
             hidden,
             diverged: self.diverged.clone(),
+            behind,
         })
     }
 

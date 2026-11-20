@@ -601,3 +601,103 @@ fn a_conflict_among_more_changed_paths_than_the_engine_lists_reaches_the_directo
     b.discard().expect("discard");
     fixture.close();
 }
+
+/// A committed file is held by a reader that does not share writing while a
+/// merge changes it, so the merge cannot rewrite it. The path must not be
+/// forgotten: it is named when the merge happens, listed by status for as
+/// long as it shows the old bytes, kept across a restart, and brought over
+/// by the first status after the reader is gone.
+#[test]
+fn a_file_a_merge_could_not_rewrite_is_listed_kept_and_brought_over() {
+    const MINE: &[u8] = b"fn main() { a1(); }\n";
+    const THEIRS: &[u8] = b"fn main() { b2(); }\n";
+    let fixture = Fixture::new("arr-behind");
+    let a = fixture.mount("a");
+    let (a_root, a_state) = (a.root().to_owned(), a.state().to_owned());
+    let file = at(&a_root, "src/main.rs");
+    ops::run(
+        fixture.home.path(),
+        &[Op::Write(file.clone(), MINE.to_vec())],
+    );
+    a.commit(Some("a1")).expect("a1");
+    let b = fixture.mount("b");
+    ops::run(
+        fixture.home.path(),
+        &[Op::Write(at(b.root(), "src/main.rs"), THEIRS.to_vec())],
+    );
+    b.commit(Some("b2")).expect("b2");
+    let (ready, go) = (
+        fixture.home.path().join("ready"),
+        fixture.home.path().join("go"),
+    );
+    let mut reader = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &format!(
+                "$s=[System.IO.File]::Open('{}','Open','Read','Read'); Set-Content '{}' 'r'; \
+                 while (-not (Test-Path '{}')) {{ Start-Sleep -Milliseconds 20 }}; $s.Dispose()",
+                file.display(),
+                ready.display(),
+                go.display()
+            ),
+        ])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("powershell");
+    while !ready.exists() {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    ops::run(
+        fixture.home.path(),
+        &[Op::Write(a_root.join("other.txt"), b"other".to_vec())],
+    );
+    let merged = a.commit(Some("a3")).expect("a3");
+    assert!(merged.merged);
+    assert_eq!(merged.rebased.refused.len(), 1, "{:?}", merged.rebased);
+    assert!(
+        merged.warnings.iter().any(|w| w.contains("src/main.rs")),
+        "{:?}",
+        merged.warnings
+    );
+    // Still held: the file is old, and status says so without calling it
+    // a change.
+    let status = a.status().expect("status");
+    assert_eq!(status.behind, ["src/main.rs"]);
+    assert!(status.hidden.iter().any(|(path, _)| path == "src/main.rs"));
+    assert!(status.changes.is_empty(), "{:?}", status.changes);
+    assert_eq!(std::fs::read(&file).expect("read"), MINE);
+    // A Commit meanwhile says so too, and commits nothing of the old file.
+    let quiet = a.commit(None).expect("commit");
+    assert!(
+        quiet.warnings.iter().any(|w| w.contains("src/main.rs")),
+        "{:?}",
+        quiet.warnings
+    );
+    assert_eq!(fixture.saved("work").1["src/main.rs"], digest(THEIRS));
+    // The list is in the state directory: another provider has it.
+    a.unmount().expect("unmount");
+    assert!(std::fs::read_to_string(a_state.join("behind"))
+        .expect("the list")
+        .contains("src/main.rs"));
+    let (a, found) = Workspace::resume(&fixture.engine, &a_root, None, 0).expect("resume");
+    assert_eq!(found, 0);
+    let held = reader.try_wait().expect("reader").is_none();
+    assert_eq!(a.status().expect("status").behind, ["src/main.rs"]);
+    assert!(held, "the reader ended early; rerun");
+    // The reader goes: the next status brings the file over.
+    std::fs::write(&go, b"go").expect("signal");
+    reader.wait().expect("reader");
+    let status = a.status().expect("status");
+    assert!(status.behind.is_empty(), "{:?}", status.behind);
+    assert_eq!(std::fs::read(&file).expect("read"), THEIRS);
+    assert_eq!(
+        std::fs::read_to_string(a_state.join("behind")).expect("the list"),
+        ""
+    );
+    agree(&fixture, &a, "after the reader closed");
+    a.discard().expect("discard");
+    b.discard().expect("discard");
+    fixture.close();
+}

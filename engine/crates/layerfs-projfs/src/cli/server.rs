@@ -68,6 +68,10 @@ fn status(mounted: &Mounted) -> String {
                                 .as_deref(),
                         ),
                     ),
+                    (
+                        "behind",
+                        json::strings(status.behind.iter().map(String::as_str)),
+                    ),
                     ("elapsed_ms", milliseconds(began)),
                 ])
             }
