@@ -14,12 +14,19 @@
 > scanning was **on** for every run. The comparison with LayerFS through
 > WSL2 + Docker was **not run**.
 >
-> **Revised after an independent review.** The review found that a Commit
-> could miss changes and could undo another Workspace's Commit. Section 13
-> lists all twelve findings and whether each is fixed or open. Changes are
-> now tracked from the NTFS change journal instead of ProjFS notifications.
-> Only the Commit, status and build measurements were run again after that
-> change; every other number in section 7 is of the code before it.
+> **Revised after three independent reviews.** The first found that a Commit
+> could miss changes and could undo another Workspace's Commit. The second
+> found that the fixes still took "nothing says it changed" for "unchanged"
+> in several places. The third found a path that a merge could not rewrite
+> and then forgot. Section 13 lists every finding, two faults found between
+> the reviews, and whether each is fixed or open. Changes are tracked from
+> the NTFS change journal, and wherever the journal cannot rule a change
+> out, contents are compared.
+>
+> **The measurements** in section 7 are one full run of the benchmark, of
+> the commit before the last two code changes, built with the machine's
+> default compiler instead of the repository's, on a machine that another
+> session began to use near the end. Section 7 says what that touches.
 
 The prototype mounts a LayerFS Workspace as an ordinary local directory through
 the Windows Projected File System (ProjFS). It uses no WSL2, no Docker, no
@@ -31,22 +38,50 @@ Workspace and to capture its changes, and nothing else.
 
 Read this first. Each item is explained where it is linked.
 
-**Open after the review** (section 13 has every finding)
+**Open after the three reviews** (section 13 has every finding)
 
 - **A store through a mapped view of a file that is already an ordinary
   file is not seen while the file stays open.** NTFS writes no change
   journal record for it until the file is closed. The first Commit after
   the close has it (tested). A Commit made while the file is still mapped
   silently lacks it.
-- **A conflicted merge that changes more than 4,096 paths can lose
-  Conflicts** (finding 8). The review suspected it from the code; it was
-  neither reproduced nor fixed here.
+- **One rule rests on NTFS and ProjFS behavior that is observed, not
+  documented** (the third review's finding 2, open). An application's write
+  to a projected file is recorded while the file is still marked a
+  placeholder (3.1). The tracker tells such a write from ProjFS writing the
+  file's content in, and keeps every file with unclosed changes suspect. It
+  relies on one thing seen in all five captured sequences and not
+  guaranteed: when the last handle closes after a write, the close record
+  no longer shows the placeholder mark. If a Windows build closed first and
+  unmarked later, an overwrite in place would be missed between the two.
+  The check that would cover it (at such a close record, compare the file's
+  size and time with the base's) costs one open per file ProjFS writes in,
+  which is every file a search reads, for a sequence that was never seen.
+  It was judged not small and is not built.
+- **A file a merge cannot rewrite stays old until its holder lets go.**
+  When another process holds a file so that it cannot be written (a reader
+  that shares no writing, a mapped view), the step after a merge leaves it.
+  The Commit names it, status lists it as behind, and every status and
+  Commit tries again (4.5; the third review's finding 1, fixed). What
+  stays: while it is behind, the file shows old bytes, and an edit of it in
+  that state is committed over the Branch's change like any edit, with a
+  warning and no Conflict.
 - **After a restart during which the Branch moved, Commit is refused for
-  good.** It no longer undoes the Branch's changes (finding 2), but it
-  cannot merge either: the Workspace can be read and discarded, not
-  committed.
-- Three smaller points in `src/sys.rs` (finding 11), a refusal path no test
-  runs, and a benchmark bias in ProjFS's favour that was not removed.
+  good.** It no longer undoes the Branch's changes, but it cannot merge
+  either: the Workspace can be read and discarded, not committed. A
+  provider that stops in the moment between the engine's publication of its
+  own Commit and the write of the base record is taken for this case too.
+- **A file changed in the moment between a Commit's read of it and the
+  merge of that Commit** is kept as it is when the merge changed it as
+  well. The Commit says so in a warning. The next Commit stores the kept
+  file over the merged one, with no Conflict.
+- **With the change journal and ProjFS's rename reports both lost**, a
+  projected file that was renamed over another projected file's name is
+  found only if the two differ in size or time (4.2). Either record alone
+  finds it (tested).
+- Three smaller points in `src/sys.rs` (first review, finding 11), a
+  refusal path no test runs, and a benchmark bias in ProjFS's favour that
+  was not removed.
 
 **Not run**
 
@@ -56,12 +91,9 @@ Read this first. Each item is explained where it is linked.
 - **Defender real-time scanning off.** It is on and tamper-protected on this
   machine; turning it off is a security setting and was not changed. Every
   number in section 7 is with real-time scanning **on**.
-- **Most of the benchmark after the change of tracking.** Only the Commit,
-  status and build cases were run again, as asked. The mount, listing,
-  search, discard, disk and memory tables are from the run made before it
-  (`bbf880c68`). Since then the provider also reads the change journal five
-  times a second and asks ProjFS for fewer notifications. What either does
-  to those numbers was not measured.
+- **A full benchmark run of the last commit, on the repository's compiler,
+  on a machine idle to the end.** Section 7 is one full run that misses
+  each of the three by a little, and says how.
 - **A true cold cache.** Windows has no unprivileged way to drop the file
   cache. "Cold" mounts purge only the Store file's cached pages (an
   unbuffered open, best effort). No cold-cache claim is made.
@@ -100,8 +132,8 @@ Read this first. Each item is explained where it is linked.
 - It needs the volume's NTFS change journal. Reading it needs no
   administrator rights. Creating one on a volume that has none does.
 - A Commit captures each file consistently but not all files at one instant.
-- A committed file stays a full file on disk until the Workspace is discarded
-  or a merge replaces it.
+- A committed file stays a full file on disk until the Workspace is
+  discarded.
 - If the state directory is lost, no command can clean the Workspace
   directory up.
 
@@ -185,6 +217,8 @@ uses the directory through ordinary file calls.
         +-----------------> Ledger   what each full file was last committed as
                             Capture  at Commit: makes the engine Workspace's
                                      view equal the disk
+                            Follow   after a merge: brings the disk to the
+                                     tree the engine installed
                 |
                 v
  Existing engine: BoundWorkspace (SQLite overlay over the immutable base)
@@ -222,20 +256,59 @@ position of the last Commit (`src/track/watch.rs`, `src/ntfs.rs`):
   the reasons and the attributes.
 - *Items are found by identity.* A changed file is opened by its identity
   (`OpenFileById`) and has the path it has now, whatever was renamed above
-  it since. A directory in which a name appeared or disappeared is listed
-  once and compared with the base.
+  it since, and every other path it has as a hard link. A directory in
+  which a name appeared or disappeared is listed once and compared with the
+  base. An item that is on the volume and may not be opened ("access
+  denied") is not taken for one that is gone: status and Commit are refused
+  until it can be opened (tested).
+- *What arrives at a name is compared by content.* The journal says that an
+  item arrived at a name. It does not say what stood there before, and the
+  Store may hold another item under that name. So a file that was renamed
+  or hard-linked is compared by its bytes at every name it has, whatever
+  ProjFS says of it, and a directory that was created, renamed or moved in
+  is compared whole: every name and every file below it. The second review
+  found this missing (section 13): a directory swapped in under an existing
+  name kept its old content in the Commit.
 - *The record's attributes are NTFS's own*, which the ProjFS filter hides
   from every process. A hidden system reparse point is a tombstone. Any
-  other reparse point is a placeholder, whose bytes are the base's by
-  construction, so the records of hydration are not changes.
-- *A handle is one record.* The first write through a handle is a record;
-  later writes through the same handle add none until it closes. So a file
-  whose handle the journal has not shown closed is compared at every Commit.
+  other reparse point is a placeholder, whose bytes are the base's for the
+  path it was made at.
+- *A data record on a placeholder is ProjFS's or an application's.* ProjFS
+  writes a file's content into its placeholder when the file is first
+  read. That is an "overwrite" record which begins while the file has the
+  "recall on data access" attribute, and it never changes the length. An
+  application's write to a projected file is recorded on the placeholder
+  too: ProjFS takes the placeholder mark off only after the write has
+  returned, and while another process has the file open, later still. So a
+  data record on a placeholder is a change unless it is the write-in of
+  content. The first version of the journal reader took all of them for
+  ProjFS's own, and a Commit begun in that interval answered "nothing
+  changed" (`results/usn-probe.txt`, section 4; tested with a reader
+  holding the file).
+- *A reason is recorded once between two closes, and the close is the
+  last handle's.* The first write to a file is a record. While any handle
+  on the file stays open, a later write can add none: a second write
+  through the same handle, a write by a second process while a reader holds
+  the file, an overwrite in place after ProjFS wrote the content in (the
+  record says "overwrite" already). So a file with a data reason and no
+  close in the journal stays suspect: it is compared by its bytes at every
+  status and Commit. It stops being suspect when the journal shows the
+  close, or when a published Commit read the file and found its newest
+  record a close; the next change to such a file has to write a new
+  record. The list of suspect files is written to the state directory
+  beside the journal position it belongs to, so it outlives the provider.
+  The cost is real and bounded: a file that some process keeps open after
+  reading or writing it is read again at every Commit for as long as it is
+  open.
 - *The journal is one per volume and bounded* (32 MiB on this machine). A
   thread reads it five times a second, so a burst of activity cannot push
-  unread records out. If the position recorded at the last Commit is gone
-  all the same (a long time unmounted, or the journal was recreated),
-  everything on disk is compared once and nothing is missed (tested).
+  unread records out. If the position recorded at the last Commit cannot be
+  read from all the same, everything on disk is compared once (tested for
+  each case): its records were overwritten (a long time unmounted), the
+  journal is another one, or the position lies after the journal's end (a
+  volume restored to an earlier state). In the last two cases the record of
+  committed files is not asked either, since its answers rest on the same
+  journal.
 
 So the work of a status or a Commit follows what happened on the volume
 since the last look, and the number of changed items. No directory is
@@ -255,8 +328,8 @@ Workspace's view (overlay over base), and the difference is applied to the
 view with the engine's own mutation operations (create, write, rename, link,
 remove, set attributes). A directory whose names changed is compared name by
 name with the view's directory. A directory new to the view is taken in
-whole. A junction or symbolic link is never followed: it is named and left
-out. The step is idempotent: an item already equal costs a compare, and a
+whole, and so is one that arrived at a name the view already holds. A
+junction or symbolic link is never followed: it is named and left out. The step is idempotent: an item already equal costs a compare, and a
 capture that fails halfway leaves a view the next capture corrects. The
 price is one extra copy of every changed file's bytes into the overlay
 (measured in 7.4).
@@ -264,7 +337,11 @@ price is one extra copy of every changed file's bytes into the overlay
 **4. A placeholder carries the content identity.** The 32-byte object identity
 of a file's content is stored in the placeholder ProjFS keeps on disk and
 handed back with every data request. A read needs no path lookup, and stays
-right after the file is renamed or the base moves.
+right after the file is renamed or the base moves. The other side of this:
+a placeholder that was renamed holds the bytes of the path it was made for,
+not of the path it has. ProjFS's state bits do not show that (a renamed
+placeholder has the same bits as any other), so the rename has to be known
+from the journal or from ProjFS's report.
 
 **5. The provider can see only the local layer.** While a status, capture or
 discard runs, the provider answers requests *from its own process* as if it
@@ -284,14 +361,32 @@ and its overlay files keep #452's identity checks.
 ordinary full file on disk after its Commit, and ProjFS can say nothing more
 about it than "full". The state directory therefore records, for each such
 file, its size, its time and the number of its newest change journal record
-when the Commit read it (`src/workspace/ledger.rs`). It is used in two
-places. When a merge moves the base, a committed file that is still exactly
-as committed, and whose entry differs between the base before the merge and
-the base after it, is removed from the disk, so the new base shows through. And when the journal cannot answer, a file still exactly as
-committed is not a change. The journal number is what makes "exactly as
-committed" exact: a store through a mapped view moves neither a file's size
-nor its time, but it moves that number once the file is closed. A file the
-journal marks is always compared by its bytes, whatever the record says.
+when a Commit read it (`src/workspace/ledger.rs`). The journal number is
+what makes "exactly as it was read" exact: a store through a mapped view
+moves neither a file's size nor its time, but it moves that number once the
+file is closed.
+
+The record only ever saves a comparison. It is asked in two places: when
+the journal cannot answer and everything on disk is looked at, and when a
+merge has to know whether a full file still holds what the Commit captured.
+An answer of "no", or no entry at all, means "compare the bytes", never
+"changed" and never "unchanged". So a lost or incomplete record costs
+comparisons and is filled again by them (tested with the record deleted).
+A file is entered only when its newest journal record is a close: while
+its changes are open, a write can leave that number where it is.
+A file the journal marks is always compared by its bytes, whatever the
+record says.
+
+**8. After a merge the directory is brought to the installed tree.** With a
+FUSE mount the engine's view is what the directory shows. Here the directory
+is NTFS, so when the engine installs a root that is not the one this
+Workspace captured, every item on disk that the merge changed has to follow
+(`src/workspace/follow.rs`; the steps are in 4.5). The engine reports both
+roots, the captured one and the installed one, and the step compares the
+two trees at the items that are on disk. It does not use the engine's list
+of changed paths, which is capped at 4,096. An item it cannot change is
+kept on a list in the state directory and tried again at every status and
+Commit (`src/workspace/unfollowed.rs`).
 
 ### 3.2 What ProjFS and NTFS actually do (observed, each in a test or a probe)
 
@@ -300,6 +395,10 @@ journal marks is always compared by its bytes, whatever the record says.
 | For a file that is already full, ProjFS reports a change only when the writing handle closes | Changes are read from the NTFS change journal, which records the first write |
 | Without administrator rights the journal is readable only through the unprivileged call, and that leaves out the names | Items are found by identity; a directory with a changed name is listed |
 | A later write through the same open handle adds no journal record | A file not yet shown closed is compared at every Commit |
+| The same holds across handles: a reason is recorded once between two closes, and the close is the last handle's. With a reader on a file, a second writer's write adds no record | A file is suspect while its changes are not closed in the journal, not while a writer has it open |
+| An application's write to a projected file is recorded while the file is still a reparse point; the record without that attribute, and the close, follow when ProjFS has taken the mark off, which waits for other open handles | A data record on a placeholder is a change unless it is ProjFS writing the content in |
+| ProjFS's write-in of content is an overwrite that begins while the file has the recall-on-data-access attribute, and never changes the length | This is how it is told from an application's write |
+| An overwrite in place of a projected file that another process holds open adds no record: ProjFS's write-in already recorded "overwrite" | Such a file is compared while it is open; nothing in the journal tells it from a file that was only read |
 | A store through a mapped view adds no journal record while the file is open | A gap that stays (section 1) |
 | No ProjFS notification for an attribute change | It is a journal record |
 | At NTFS level a placeholder is a sparse reparse point; no process, the provider included, sees either attribute | Hydration records are told from changes by the journal's attributes; a hydrated file holds whole 64 KiB units (7.5) |
@@ -310,6 +409,10 @@ journal marks is always compared by its bytes, whatever the record says.
 | Looking at a file's ProjFS state creates its placeholder | State is read only in the local-only view |
 | Renaming a projected directory fails with error 50 | Unsupported; a local directory renames normally |
 | A hard link to a projected file is allowed and leaves both names dirty placeholders | Capture replays it as an engine link |
+| A renamed placeholder has the state bits of any other placeholder (1, or 3 once read), and the size and time of the file it was made for | Its rename is taken from the journal, and its bytes are then compared. With no journal, a size or time that is not the base's gives it away |
+| ProjFS lists the base's names in the root and in directories it made itself. In a directory made in the Workspace it lists nothing, also after that directory is committed | A name a merge adds below such a directory is written to the disk |
+| Opening by identity a file whose access list denies everyone fails with "access denied" | Treated as "cannot tell", not as "gone": status and Commit are refused |
+| A file deleted while another process holds it open is gone from its directory at once; opening it by identity then finds nothing | Treated as gone, which it is |
 
 ## 4. The questions #454 asks about ProjFS
 
@@ -323,11 +426,13 @@ and every file searched, it reads that file and the index file Git itself
 rewrote (section 7.4).
 
 Not dependent on a close: a change is in the journal when it first happens.
-A file changed through a handle that is still open is committed with the
+A file whose changes are not closed in the journal is committed with the
 bytes it has, and compared again at every later Commit until the journal
-shows the handle closed (tested for two writes through one handle). The gap
-that stays is a mapped view: a store through a view of a file that is
-already full adds no record while the file is open (section 1).
+shows the close. That is tested for two writes through one handle, for two
+writers one after the other under a reader, and for writes to projected
+files that a reader holds open, in place and not. The gap that stays is a
+mapped view: a store through a view of a file that is already full adds no
+record while the file is open (section 1).
 
 Stable, per file: a changed file is opened denying writers for the length of
 the read. If another process already has it open for writing, that open fails;
@@ -343,12 +448,14 @@ need a quiescent point from the host (the tool-call boundary #454 already
 asks for) or a volume snapshot. What the journal records after the capture
 began is left for the next Commit, so this is safe to repeat, not atomic.
 
-After a restart: the journal position is in the state directory, so `resume`
-reads what changed while no provider ran from the journal itself. Nothing
-depends on a provider having been alive to hear about it. If the journal no
-longer reaches back that far, everything on disk is compared once against
-the record of committed files. A rename found without ProjFS's report is a
-deletion and an addition.
+After a restart: the journal position is in the state directory, with the
+list of files that were open for writing at that position, so `resume` reads
+what changed while no provider ran from the journal itself, and keeps
+looking at a file whose handle outlived the provider (tested: a write
+through a handle held across a restart is committed). Nothing depends on a
+provider having been alive to hear about it. If the journal cannot be read
+from the recorded position, everything on disk is compared once. A rename
+found without ProjFS's report is a deletion and an addition.
 
 ### 4.2 Full (hydrated) files: when they appear and what they cost
 
@@ -366,9 +473,26 @@ On-disk states seen, as `PrjGetOnDiskFileState` reports them:
 
 A file created in the Workspace is a full file from the start.
 
-A hydrated placeholder still equals the base, so status and Commit never read
-it. A full file is the only kind whose bytes can differ, and status reads one
-only when its size equals the base's.
+A placeholder, hydrated or not, holds the base's bytes for the path it was
+made at. Where nothing says it moved or was written, status and Commit
+never read it; status reads a full file only when its size equals the
+base's. "Was written" matters because the state in the table lags: for a
+moment after a write, and for as long as another process holds the file,
+a written file still reads as a placeholder. The journal says so earlier
+(3.1), and a file it marks is compared whatever its state says. A placeholder the journal shows renamed or
+hard-linked is the exception: under its new name it holds another path's
+bytes, and it is compared like a full file (tested for a file never read
+and for one read before).
+
+When the journal cannot answer and everything on disk is compared, a
+renamed placeholder has no record. It is then told by its size and time,
+which are still those of the file it was made for: a placeholder whose size
+or time is not the base's at its path is compared by its bytes. That finds
+it unless the two files have the same size and the same time to the 100 ns.
+ProjFS's own rename report covers that case when it survived; with both
+lost, it is not found (section 1). A placeholder whose size and time are
+the base's is not read: the test checks that such a comparison of
+everything reads no placeholder.
 
 Cost: a full file is no longer the provider's. It keeps its whole size on
 disk for the life of the Workspace, **including after it is committed**. ProjFS
@@ -397,7 +521,8 @@ Once the deletion is committed, the base no longer holds the name and the
 tombstone has nothing left to hide. The provider then clears it
 (`PrjDeleteFile` with the tombstone flag). So when another Workspace brings
 the name back, a merge shows it here (tested). A tombstone that could not be
-cleared is remembered and cleared when the name returns.
+cleared then is cleared by the merge that brings the name back: for every
+name a merge adds, the step in 4.5 clears a tombstone if there is one.
 
 One thing remains visible to applications: a file watcher sees an extra
 `Created <old name>` event when a tombstone is written (section 6).
@@ -407,6 +532,10 @@ One thing remains visible to applications: a file watcher sees an extra
 Creating a link in the Workspace works, to a projected file too. Capture sees
 the reported link, checks the two names are one file on disk, and replays it
 as an engine link: the Commit stores one inode with two names (tested).
+When the new name stood for another file before, that file is replaced in
+the Commit (tested). Without ProjFS's report the link is still found: the
+journal marks the file, and a marked file is compared at every name it has
+on the volume, so both names get the bytes, as two files.
 
 Projection is the limit. ProjFS has no way to show one file under two names,
 so a later mount projects two independent files. A write through one name
@@ -418,38 +547,87 @@ not report it. A product would have to refuse or break such links explicitly;
 ### 4.5 Updating the baseline when the Branch moves on
 
 The engine already does the hard part. A Commit over a moved head is merged by
-`commit_captured`, which installs the merged root in the Workspace. The
-provider then:
+`commit_captured`, which installs the merged root in the Workspace and
+reports two roots: the one this Workspace captured, which is what the
+directory shows, and the one installed in its place. The provider then:
 
-1. serves the new tree at once, so a file first opened from now on is
-   projected from it;
-2. walks the items on disk in the local-only view and, for each file that is
-   still a placeholder, compares its entry in the old base with the new one,
-   and calls `PrjUpdateFileIfNeeded` when they differ or `PrjDeleteFile` when
-   the new base has no such file;
-3. for each committed full file in its record: when the new base holds that
-   path differently and the file on disk is still exactly as committed,
-   removes it from the disk, so the new base shows through;
-4. leaves a full file that changed since its Commit alone: it is a local
-   change;
-5. clears the tombstone of a name the new base brought back.
+1. writes to the state directory which base is served from now on and that
+   the step below is in progress, with both roots, before anything on disk
+   changes;
+2. serves the new tree, so a file first opened from now on is projected
+   from it;
+3. walks the items on disk in the local-only view and compares, for each,
+   its entry in the two trees. Where they differ:
+   - a placeholder is given the new facts and content
+     (`PrjUpdateFileIfNeeded`), or removed when the new tree has no such
+     file;
+   - a full file that still holds what the Commit captured is rewritten with
+     the merged bytes, or removed. "Still holds" is answered by the record
+     of committed files, which has this Commit's own files in it by then,
+     and by comparing the bytes with the captured tree where the record has
+     no answer;
+   - a full file that holds something else changed after the Commit read
+     it. It is left alone and named in a warning (section 1);
+   - an item that cannot be changed (the file is held by another process
+     so that it cannot be written or read, or ProjFS refuses the
+     placeholder) goes on a list in the state directory, with the tree it
+     still shows and the tree it has to reach;
+4. for each name the new tree added in a directory that is on disk: clears
+   a tombstone of that name if there is one, and, when the directory is one
+   made in this Workspace, into which ProjFS projects nothing, writes the
+   file or directory to the disk;
+5. removes a directory the new tree no longer holds, once it is empty;
+6. writes the state directory's record again, without the step.
 
-Its work follows the items on disk and the committed files. Files never
-looked at need nothing. The tests merge a Commit that changed a file this
-Workspace had only read, one that changed a file this Workspace had itself
-committed, and one that brought back a name this Workspace had deleted; in
-each the directory then equals the merged Commit. A conflicted merge
-publishes nothing; the engine's marker files are written into the directory
-and the next Commit publishes the resolution.
+If the provider stops between 1 and 6, the next `resume` finds the step in
+the record and finishes it before it serves (tested by putting the state
+directory in that state). If the step fails in a running provider, the
+Commit stays published, a warning says so, and further Commits are refused
+until a resume finished the step.
+
+The list of items that could not be changed is what keeps one refused file
+from being forgotten. Nothing in the change journal marks such a file, so
+without the list the next status would call the directory clean while the
+file is old. Every status and every Commit first tries the list again: an
+item that holds the bytes of the tree it has to reach, or can be brought to
+them now, leaves it. Status names what is left, in a list of its own
+(`behind`) and with the reason; a Commit warns about each. A later merge
+sets the tree every listed path has to reach. The list survives a restart
+(tested: listed while a reader holds the file, still listed after
+`resume`, brought over by the first status after the reader is gone).
+
+A file is rewritten in place, so it stays the same file for a process that
+has it open or mapped; a file that may not be written while it is mapped is
+refused and listed, not replaced under the mapping (tested). Its new bytes
+are fetched whole from the Store before the file is touched.
+
+A conflicted merge goes the same way. The engine installs the merged tree
+with marker blocks in the Workspace view and publishes nothing; the
+directory is brought to that tree, so the conflicted files hold their
+markers and every other change of the Branch is there too. The next Commit
+publishes the resolution. Because the step compares trees, a Conflict
+among more changed paths than the engine lists (4,096) reaches the
+directory as well (tested with 4,201).
+
+The step's work follows the items on disk. Files never looked at need
+nothing. The tests merge: a file this Workspace had only read; one it had
+committed; one it had rewritten with the same bytes in the very Commit that
+merges; one that both sides edited in different places; one below a
+directory it had renamed; one whose entry in the record of committed files
+was lost; a name it had deleted that comes back; files and directories
+added below a directory it had made; a file and a directory the other side
+deleted. In each the directory then holds what the Branch holds.
 
 Gaps:
 
-- A projected directory the new base removed stays as an empty directory
-  until discard.
 - A file that is changed locally in the short time between the capture and
-  this update, and that the merge also changed, is left alone, and the next
+  this step, and that the merge also changed, is left alone, and the next
   Commit captures it over the other version with no Conflict. The engine
-  cannot see that window.
+  cannot see that window. The Commit names the file in a warning.
+- A file on the list of items that are behind shows old bytes until it can
+  be rewritten. Status says so, but nothing stops an editor from saving it:
+  that edit is committed over the Branch's version at the next Commit, with
+  the warning and no Conflict.
 - After a restart during which the Branch moved there is no merge at all:
   Commit is refused (section 8).
 
@@ -472,9 +650,10 @@ with what was looked at. The Store's object cache is the engine's.
 ## 5. M0 and M1: what passes
 
 `cargo test --locked -p layerfs-projfs` on Windows 11 build 26200, rustc
-1.85.1: **62 tests, 62 passed** (eight of them are the child-process entry
+1.85.1: **95 tests, 95 passed** (eleven of them are the child-process entry
 points, which do nothing in an ordinary run). Every edit a test makes "as an
-application" is made by a child process.
+application" is made by a child process. The whole suite takes under a
+minute.
 
 M0, a plain directory projected (`tests/m0_projection.rs`):
 
@@ -500,7 +679,7 @@ M1, backed by the Store (`tests/m1_workspace.rs`, `tests/cli.rs`):
 - a Commit over a moved head merges and the directory follows;
 - unmount and discard never delete history.
 
-After the review (`tests/review_repro.rs`, the review's own tests, and
+After the first review (`tests/review_repro.rs`, the review's own tests, and
 `tests/tracking.rs`):
 
 - a write through a handle that is still open reaches the next Commit, and
@@ -510,13 +689,53 @@ After the review (`tests/review_repro.rs`, the review's own tests, and
   it deleted that another Workspace brings back;
 - a restart with nothing uncommitted changes nothing on the Branch, and a
   restart after the Branch moved refuses Commit and says why;
-- when the change journal cannot answer, everything on disk is compared and
-  nothing is missed;
+- when the change journal cannot answer, everything on disk is compared,
+  nothing is missed, and no placeholder is read for it;
 - a junction does not block Commit, is named, and is never followed;
 - `resume` refuses another Workspace's state directory;
 - a store through a mapped view of a committed file is found once the file
   is closed, and not before (section 1);
 - discard removes every kind of item a session leaves.
+
+After the second review (`tests/review_repro2.rs`, its own tests, and
+`tests/arrivals.rs`):
+
+- a write through a handle held across a provider restart is committed;
+- a directory swapped in under an existing name, renamed there or moved in
+  from outside, is committed with what it holds now; so is a directory
+  removed and made again, empty or not;
+- a projected file renamed over a deleted name, and a hard link made over
+  one, are committed with the bytes they have, also with ProjFS's reports
+  lost, and with the journal lost as well;
+- after a merge the directory holds what the Branch holds, in each of the
+  cases listed in 4.5;
+- a Conflict brings the Branch's other changes to the directory, and a
+  Conflict among 4,201 changed paths still writes its marker block;
+- a merge the directory did not finish following is finished at `resume`,
+  and a file changed since its Commit is left alone by it;
+- a journal position after the journal's end, or before its first record,
+  makes everything be compared.
+
+After both (`tests/tracking.rs`):
+
+- a changed file that may not be opened refuses status and Commit, and is
+  committed once it can be opened;
+- a write to a projected file is in the Commit begun right after it, also
+  while another process holds the file open for reading, and also when the
+  write is an overwrite in place;
+- a second writer's write under one reader is committed;
+- reading a file is not a change, and a committed file that is as its
+  Commit read it is not read again when everything is compared.
+
+After the third review (`tests/review_repro3.rs`, its own tests, and
+`tests/arrivals.rs`):
+
+- a second write under a reader is committed after a provider restart too,
+  and the file stops being read once the reader closes;
+- a store through a mapped view is not replaced by a merge without the
+  Commit naming the file;
+- a file a merge could not rewrite is named, listed by status as behind,
+  kept across a restart, and brought over once it can be written.
 
 ## 6. M2: Windows correctness cases
 
@@ -533,7 +752,7 @@ column; the verdicts are recorded in `results/m2.tsv`.
 | Paths over 260 characters | PASS | A 300+ character path is created, committed, projected by a fresh mount, edited there and committed again. |
 | Read-only attribute across mount, edit, Commit, remount | PASS | Stored as the mode's write bits (0o444, 0o644). ProjFS sends no notification for it; the change journal has a record, and no directory is listed to find it. |
 | Hidden attribute across mount, edit, Commit, remount | UNSUPPORTED | LayerFS portable metadata is mode and mtime. The bytes commit; the attribute stays on this Workspace's local file and is gone after a remount. Nothing warns. |
-| A file held open by another process during Commit | PASS | The Commit succeeds with the bytes on disk and names the file in `live`. It is compared again at every Commit until its handle is closed. A change during the read refuses the Commit as `Busy`; no test makes that happen. |
+| A file held open by another process during Commit | PASS | The Commit succeeds with the bytes on disk and names the file in `live`. It is compared again at every Commit until the journal shows its changes closed. A change during the read refuses the Commit as `Busy`; no test makes that happen. |
 | A file written through a memory-mapped view | PASS | Opening a base file for a writable mapping makes it full, which the change journal records. With a shared handle, a Commit while the view is mapped and unflushed stores the mapped bytes. With an exclusive handle (the .NET default) nobody can read the file: status says modified, the Commit is `Busy`, and it commits once unmapped. A gap that stays: a store through a view of a file that was already full is seen only once the file is closed. |
 | Delete then recreate the same name before Commit | PASS | A recreated file commits as modified; a recreated directory holds only its new content; a file replaced by a directory commits as a directory. |
 | Hard links | UNSUPPORTED | See 4.4: stored as one inode, projected as two files on a later mount. |
@@ -551,32 +770,47 @@ One command produced every number in this section:
 powershell -NoProfile -ExecutionPolicy Bypass -File engine\crates\layerfs-projfs\bench\run.ps1
 ```
 
-It was run twice. The first run measured everything, from a fresh clone of
-this branch at `bbf880c68`, into an empty work directory. The second, made
-after the review's fixes from a fresh clone at `61aa3a4e5`, measured only the
-Commit, status and build cases (`run.ps1 -Cases commits,builds`), on the
-fixtures and Stores the first run had prepared. Sections 7.4 and 7.6 are
-from the second run; everything else is from the first, and so of the code
-before the change of tracking.
+It was run from a fresh clone of this branch at `d78023836` into an empty
+work directory, so the fixtures and their Stores were made by this run. It
+took two hours and fifty minutes. Its output is kept as written in
+`bench/results/20261120T043817Z/`: `raw.csv` (one row per measurement),
+`environment.json`, `fixtures.json`, and the script's own `summary.csv` and
+`summary.md`.
 
-The first run's output is kept as written in `bench/results/20261118T001312Z/`:
-`raw.csv` (one row per measurement), `environment.json`, `fixtures.json`, and
-the script's own `summary.csv` and `summary.md`. One edit was made afterwards:
-the user profile directory in `environment.json`'s `work_directory` is
-written as `%USERPROFILE%`. The script now records it that way itself. The
-second run's output is in `bench/results/20261120T003617Z/`, as written.
+Three things about this run that a reader has to know:
+
+- **It is not of the last commit.** Two commits changed the crate's code
+  after it. `ff02d795f` keeps and retries the paths a merge could not bring
+  over (13.4); no benchmark case merges, so its code runs here only as a
+  check of an empty list at each status and Commit. `79c119784` changes a
+  test. The comparison in 7.4 was made with the last commit's binary.
+- **The compiler was not the repository's.** The run's launch script did
+  not select a toolchain, so the provider was built with the machine's
+  default, rustc 1.96.0, and so was ripgrep in 7.6. The tests and lint of
+  section 9 ran on 1.85.1, and the two binaries compared in 7.4 were both
+  built with 1.85.1. A full run on 1.85.1 was not made.
+- **The machine was idle when it started, not to the end.** No other build
+  or test was running at the start. About thirteen minutes before the end,
+  another session began running `cargo test` in another checkout of this
+  repository. That overlaps the last disk cases of the medium fixture (the
+  16 copies and worktrees of 7.5) and all of 7.6. Those rows may be
+  disturbed; nothing was done to correct them.
+
+Four earlier complete runs are kept beside it and not reported, each of
+code that changed afterwards. 7.8 lists them, and uses the latest of them
+to show how far two runs on this machine differ.
 
 How to read the tables:
 
 - Each line gives the number of samples `n`, then the median, the minimum and
   the maximum of the rows whose status is OK. No sample is dropped or chosen.
-- The tables are not typed. `bench/tables.py` computes them from the two
-  `raw.csv` files and the comparison's CSV files, and writes them between
-  the marker comments of this file. This command fails when a table here
-  differs from the raw data:
+- The tables are not typed. `bench/tables.py` computes them from `raw.csv`
+  and the comparison's CSV files, and writes them between the marker
+  comments of this file. This command fails when a table here differs from
+  the raw data:
 
   ```powershell
-  python engine\crates\layerfs-projfs\bench\tables.py engine\crates\layerfs-projfs\bench\results\20261118T001312Z --commits engine\crates\layerfs-projfs\bench\results\20261120T003617Z --compare engine\crates\layerfs-projfs\bench\results\compare --check engine\crates\layerfs-projfs\REPORT.md
+  python engine\crates\layerfs-projfs\bench\tables.py engine\crates\layerfs-projfs\bench\results\20261120T043817Z --compare engine\crates\layerfs-projfs\bench\results\compare --check engine\crates\layerfs-projfs\REPORT.md
   ```
 - Times are wall-clock milliseconds measured by the script around the whole
   command, process start included, unless a line says "inside the provider".
@@ -590,9 +824,9 @@ How to read the tables:
 <!-- begin:environment -->
 | | |
 | --- | --- |
-| Run | `20261118T001312Z`, 5 runs per case |
-| Source | commit `bbf880c68`, checkout dirty: true |
-| Toolchain | rustc 1.85.1 (4eb161250 2025-03-15) |
+| Run | `20261120T043817Z`, 5 runs per case |
+| Source | commit `d78023836`, checkout dirty: false |
+| Toolchain | rustc 1.96.0 (ac68faa20 2026-05-25) |
 | Machine | Intel(R) Core(TM) Ultra 9 275HX, 24 cores, 31.4 GiB memory |
 | Disk | NVMe MTFDKBA2T0QGN-1BN1AABGA SSD NVMe; work directory on NTFS |
 | Windows | Microsoft Windows 11 Home 10.0.26200 |
@@ -601,32 +835,11 @@ How to read the tables:
 | LayerFS through WSL2 + Docker | NOT_RUN - not set up on this machine; no number is borrowed |
 <!-- end:environment -->
 
-"checkout dirty: true" needs a word. The clone was clean when it was made (the
-log line is in `results/clean-checkout.txt`). The test step that ran before the
-benchmark wrote one untracked file, `m2-clean.tsv`, into the clone's root, and
-the script records any `git status` output as dirty. No tracked file differed
-from the commit.
-
-The second run:
-
-<!-- begin:environment-commits -->
-| | |
-| --- | --- |
-| Run | `20261120T003617Z`, 5 runs per case, cases: commits, builds |
-| Source | commit `61aa3a4e5`, checkout dirty: false |
-| Toolchain | rustc 1.85.1 (4eb161250 2025-03-15) |
-| Defender real-time scanning | **on** (tamper protection: true) |
-| Fixtures | the same Stores and source trees as the first run, in `%USERPROFILE%\AppData\Local\Temp\lfsb` |
-<!-- end:environment-commits -->
-
-Its checkout was clean, because the test step now writes its verdict file
-outside the clone.
-
 <!-- begin:fixtures -->
 | fixture | source | commit | files | bytes | with `.git` | Store file |
 | --- | --- | --- | ---: | ---: | ---: | ---: |
-| small | generated by run.ps1 from seed 454 | `277a09b87` | 1,000 | 4.2 MiB | 5.4 MiB | 2.8 MiB |
-| medium | https://github.com/rust-lang/rust tag 1.85.0 | `4d91de4e4` | 51,307 | 145.4 MiB | 189.6 MiB | 88.9 MiB |
+| small | generated by run.ps1 from seed 454 | `13b1d11df` | 1,000 | 4.2 MiB | 5.4 MiB | 2.8 MiB |
+| medium | https://github.com/rust-lang/rust tag 1.85.0 | `4d91de4e4` | 51,307 | 145.4 MiB | 189.6 MiB | 89.0 MiB |
 | build | https://github.com/BurntSushi/ripgrep tag 14.1.1 | `4649aa970` | 213 | 2.9 MiB | 3.5 MiB | 1.5 MiB |
 <!-- end:fixtures -->
 
@@ -637,13 +850,13 @@ holds everything. Project Init is setup and is timed once:
 <!-- begin:init-small -->
 | setup, once | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Project Init of the fixture (ms) | ProjFS Workspace | 1 | 2,973 | 2,973 | 2,973 |
+| Project Init of the fixture (ms) | ProjFS Workspace | 1 | 3,468 | 3,468 | 3,468 |
 <!-- end:init-small -->
 
 <!-- begin:init-medium -->
 | setup, once | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Project Init of the fixture (ms) | ProjFS Workspace | 1 | 78,198 | 78,198 | 78,198 |
+| Project Init of the fixture (ms) | ProjFS Workspace | 1 | 93,504 | 93,504 | 93,504 |
 <!-- end:init-medium -->
 
 The four setups:
@@ -661,12 +874,12 @@ Small fixture:
 <!-- begin:create-small -->
 | creating a Workspace (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| mount, cold: process start to ready | ProjFS Workspace | 5 | 48.0 | 43.7 | 65.6 |
-| mount, cold: inside the provider | ProjFS Workspace | 5 | 22.8 | 21.4 | 30.9 |
-| mount, warm: process start to ready | ProjFS Workspace | 5 | 36.6 | 34.4 | 52.1 |
-| mount, warm: inside the provider | ProjFS Workspace | 5 | 18.4 | 17.0 | 27.9 |
-| robocopy /E | full directory copy | 5 | 1,410 | 1,340 | 1,521 |
-| git worktree add | git worktree | 5 | 502 | 481 | 571 |
+| mount, cold: process start to ready | ProjFS Workspace | 5 | 46.6 | 44.0 | 69.8 |
+| mount, cold: inside the provider | ProjFS Workspace | 5 | 23.4 | 20.4 | 34.9 |
+| mount, warm: process start to ready | ProjFS Workspace | 5 | 41.3 | 32.9 | 61.0 |
+| mount, warm: inside the provider | ProjFS Workspace | 5 | 21.2 | 16.4 | 31.0 |
+| robocopy /E | full directory copy | 5 | 2,096 | 1,406 | 2,126 |
+| git worktree add | git worktree | 5 | 443 | 434 | 526 |
 <!-- end:create-small -->
 
 Medium fixture:
@@ -674,12 +887,12 @@ Medium fixture:
 <!-- begin:create-medium -->
 | creating a Workspace (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| mount, cold: process start to ready | ProjFS Workspace | 5 | 57.2 | 54.1 | 78.1 |
-| mount, cold: inside the provider | ProjFS Workspace | 5 | 32.7 | 29.7 | 42.2 |
-| mount, warm: process start to ready | ProjFS Workspace | 5 | 63.3 | 39.6 | 69.9 |
-| mount, warm: inside the provider | ProjFS Workspace | 5 | 34.4 | 19.0 | 35.3 |
-| robocopy /E | full directory copy | 5 | 53,352 | 32,757 | 63,760 |
-| git worktree add | git worktree | 5 | 27,622 | 18,258 | 38,658 |
+| mount, cold: process start to ready | ProjFS Workspace | 5 | 52.1 | 45.6 | 67.8 |
+| mount, cold: inside the provider | ProjFS Workspace | 5 | 26.1 | 23.3 | 35.4 |
+| mount, warm: process start to ready | ProjFS Workspace | 5 | 64.8 | 61.4 | 68.1 |
+| mount, warm: inside the provider | ProjFS Workspace | 5 | 32.8 | 29.6 | 36.4 |
+| robocopy /E | full directory copy | 5 | 48,011 | 34,992 | 50,443 |
+| git worktree add | git worktree | 5 | 16,487 | 15,272 | 21,672 |
 <!-- end:create-medium -->
 
 A mount does not grow with the tree: it binds the Branch and starts the
@@ -693,59 +906,59 @@ twice on the fresh mount, copy or worktree:
 <!-- begin:use-small -->
 | operation (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| full listing, first | ProjFS Workspace | 5 | 619 | 545 | 747 |
-| full listing, first | plain NTFS directory | 5 | 82.0 | 72.6 | 92.4 |
-| full listing, first | full directory copy | 5 | 132 | 110 | 142 |
-| full listing, first | git worktree | 5 | 52.3 | 49.4 | 56.6 |
-| full listing, second | ProjFS Workspace | 5 | 234 | 193 | 255 |
-| full listing, second | plain NTFS directory | 5 | 78.7 | 78.0 | 84.2 |
-| full listing, second | full directory copy | 5 | 110 | 81.2 | 118 |
-| full listing, second | git worktree | 5 | 42.2 | 39.6 | 56.6 |
-| git status, first | ProjFS Workspace | 5 | 48.6 | 45.1 | 53.7 |
-| git status, first | plain NTFS directory | 5 | 23.2 | 20.2 | 26.1 |
-| git status, first | full directory copy | 5 | 28.9 | 21.8 | 36.4 |
-| git status, first | git worktree | 5 | 71.5 | 50.7 | 83.1 |
-| git status, second | ProjFS Workspace | 5 | 40.5 | 29.0 | 51.8 |
-| git status, second | plain NTFS directory | 5 | 23.5 | 20.9 | 27.8 |
-| git status, second | full directory copy | 5 | 28.5 | 22.2 | 36.0 |
-| git status, second | git worktree | 5 | 54.5 | 23.0 | 67.9 |
-| rg, first | ProjFS Workspace | 5 | 334 | 302 | 394 |
-| rg, first | plain NTFS directory | 5 | 63.1 | 54.5 | 69.3 |
-| rg, first | full directory copy | 5 | 98.2 | 86.0 | 124 |
-| rg, first | git worktree | 5 | 105 | 91.5 | 128 |
-| rg, second | ProjFS Workspace | 5 | 98.0 | 92.3 | 99.4 |
-| rg, second | plain NTFS directory | 5 | 75.4 | 65.1 | 78.8 |
-| rg, second | full directory copy | 5 | 99.3 | 90.5 | 105 |
-| rg, second | git worktree | 5 | 93.2 | 87.0 | 100 |
+| full listing, first | ProjFS Workspace | 5 | 668 | 528 | 891 |
+| full listing, first | plain NTFS directory | 5 | 75.3 | 72.9 | 86.5 |
+| full listing, first | full directory copy | 5 | 144 | 140 | 152 |
+| full listing, first | git worktree | 5 | 60.4 | 47.6 | 83.6 |
+| full listing, second | ProjFS Workspace | 5 | 190 | 165 | 294 |
+| full listing, second | plain NTFS directory | 5 | 75.8 | 72.4 | 77.8 |
+| full listing, second | full directory copy | 5 | 130 | 123 | 134 |
+| full listing, second | git worktree | 5 | 47.6 | 34.9 | 67.1 |
+| git status, first | ProjFS Workspace | 5 | 59.3 | 40.3 | 71.6 |
+| git status, first | plain NTFS directory | 5 | 20.9 | 18.3 | 23.8 |
+| git status, first | full directory copy | 5 | 39.0 | 35.6 | 49.0 |
+| git status, first | git worktree | 5 | 85.7 | 55.0 | 102 |
+| git status, second | ProjFS Workspace | 5 | 48.5 | 47.1 | 53.6 |
+| git status, second | plain NTFS directory | 5 | 20.1 | 18.1 | 23.0 |
+| git status, second | full directory copy | 5 | 35.9 | 30.5 | 39.7 |
+| git status, second | git worktree | 5 | 71.7 | 45.9 | 86.9 |
+| rg, first | ProjFS Workspace | 5 | 332 | 301 | 382 |
+| rg, first | plain NTFS directory | 5 | 54.6 | 52.1 | 62.2 |
+| rg, first | full directory copy | 5 | 120 | 109 | 133 |
+| rg, first | git worktree | 5 | 101 | 86.7 | 158 |
+| rg, second | ProjFS Workspace | 5 | 125 | 108 | 140 |
+| rg, second | plain NTFS directory | 5 | 63.7 | 58.7 | 64.6 |
+| rg, second | full directory copy | 5 | 104 | 90.7 | 132 |
+| rg, second | git worktree | 5 | 96.9 | 91.2 | 110 |
 <!-- end:use-small -->
 
 <!-- begin:use-medium -->
 | operation (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| full listing, first | ProjFS Workspace | 5 | 13,908 | 12,375 | 15,415 |
-| full listing, first | plain NTFS directory | 5 | 768 | 672 | 831 |
-| full listing, first | full directory copy | 5 | 722 | 611 | 996 |
-| full listing, first | git worktree | 5 | 856 | 641 | 890 |
-| full listing, second | ProjFS Workspace | 5 | 2,077 | 1,621 | 2,795 |
-| full listing, second | plain NTFS directory | 5 | 579 | 551 | 927 |
-| full listing, second | full directory copy | 5 | 580 | 553 | 837 |
-| full listing, second | git worktree | 5 | 624 | 552 | 735 |
-| git status, first | ProjFS Workspace | 5 | 889 | 769 | 1,044 |
-| git status, first | plain NTFS directory | 5 | 112 | 98.8 | 265 |
-| git status, first | full directory copy | 5 | 102 | 99.7 | 103 |
-| git status, first | git worktree | 5 | 209 | 170 | 359 |
-| git status, second | ProjFS Workspace | 5 | 442 | 362 | 575 |
-| git status, second | plain NTFS directory | 5 | 104 | 91.9 | 151 |
-| git status, second | full directory copy | 5 | 98.3 | 91.1 | 207 |
-| git status, second | git worktree | 5 | 112 | 95.2 | 155 |
-| rg, first | ProjFS Workspace | 5 | 27,075 | 18,546 | 32,862 |
-| rg, first | plain NTFS directory | 5 | 1,520 | 1,481 | 1,722 |
-| rg, first | full directory copy | 5 | 11,692 | 9,933 | 15,694 |
-| rg, first | git worktree | 5 | 11,708 | 10,544 | 20,437 |
-| rg, second | ProjFS Workspace | 5 | 2,527 | 2,415 | 2,579 |
-| rg, second | plain NTFS directory | 5 | 1,590 | 1,455 | 1,695 |
-| rg, second | full directory copy | 5 | 1,969 | 1,937 | 1,981 |
-| rg, second | git worktree | 5 | 1,952 | 1,874 | 1,963 |
+| full listing, first | ProjFS Workspace | 5 | 12,874 | 11,832 | 13,997 |
+| full listing, first | plain NTFS directory | 5 | 907 | 875 | 957 |
+| full listing, first | full directory copy | 5 | 740 | 667 | 872 |
+| full listing, first | git worktree | 5 | 953 | 849 | 1,039 |
+| full listing, second | ProjFS Workspace | 5 | 1,638 | 1,476 | 2,621 |
+| full listing, second | plain NTFS directory | 5 | 758 | 666 | 884 |
+| full listing, second | full directory copy | 5 | 569 | 526 | 949 |
+| full listing, second | git worktree | 5 | 628 | 562 | 870 |
+| git status, first | ProjFS Workspace | 5 | 2,534 | 2,128 | 2,890 |
+| git status, first | plain NTFS directory | 5 | 91.9 | 91.0 | 242 |
+| git status, first | full directory copy | 5 | 99.3 | 94.0 | 227 |
+| git status, first | git worktree | 5 | 244 | 130 | 247 |
+| git status, second | ProjFS Workspace | 5 | 448 | 354 | 478 |
+| git status, second | plain NTFS directory | 5 | 103 | 93.9 | 112 |
+| git status, second | full directory copy | 5 | 99.4 | 90.6 | 108 |
+| git status, second | git worktree | 5 | 103 | 95.1 | 106 |
+| rg, first | ProjFS Workspace | 5 | 21,768 | 18,707 | 29,900 |
+| rg, first | plain NTFS directory | 5 | 1,529 | 1,510 | 20,789 |
+| rg, first | full directory copy | 5 | 10,682 | 10,475 | 11,694 |
+| rg, first | git worktree | 5 | 11,563 | 11,336 | 12,173 |
+| rg, second | ProjFS Workspace | 5 | 2,454 | 2,428 | 2,640 |
+| rg, second | plain NTFS directory | 5 | 1,531 | 1,518 | 1,937 |
+| rg, second | full directory copy | 5 | 1,930 | 1,872 | 1,975 |
+| rg, second | git worktree | 5 | 1,945 | 1,910 | 2,003 |
 <!-- end:use-medium -->
 
 What the tables show:
@@ -758,34 +971,41 @@ What the tables show:
   (documented behavior), and the provider answers from the listings it kept.
 - **The first search pays for hydration.** `rg` reads nearly every file, so
   the provider serves each file's bytes once and ProjFS writes them to disk.
-  The second search is level with the copy on the small fixture and about a
-  quarter slower than it on the medium one.
+  The second search is about a fifth slower than the copy's on the small
+  fixture (125 ms against 104 ms) and about a quarter slower on the medium
+  one (2,454 ms against 1,930 ms).
 - The copy's and the worktree's first `rg` are also far above the plain
   directory's. Their files were written moments before; the plain directory
   had been read earlier. The share of Defender in that difference was not
   isolated, because real-time scanning could not be turned off.
-- `git status` does not hydrate the tree. After it, no file outside what Git
-  itself opened has content on disk, and the content it did hydrate matches
-  the size of `.git` (7.5).
+- **`git status` hydrates what Git reads, and how much that is depends on
+  the clock.** Git reads its own files, and every working file whose time
+  is too close to its index's for Git to trust, which it then reads to
+  compare. After `git status` 1,416 files of the medium fixture had content
+  on disk in this run (7.5); in the two earlier full runs, whose fixtures
+  were cloned at other moments, 317 and 42. That is why the first
+  `git status` took 2.5 s here and about 1 s in those. It is a property of
+  a freshly cloned repository, in a worktree too (244 ms here against
+  119 ms in the run before), not of the provider.
 
 ### 7.3 Ending a Workspace
 
 <!-- begin:end-small -->
 | ending a Workspace (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| discard right after mount | ProjFS Workspace | 5 | 26.9 | 20.6 | 30.9 |
-| discard after listing, git status and rg | ProjFS Workspace | 5 | 238 | 237 | 279 |
-| rmdir /s /q | full directory copy | 5 | 469 | 448 | 494 |
-| git worktree remove --force | git worktree | 5 | 131 | 126 | 133 |
+| discard right after mount | ProjFS Workspace | 5 | 29.0 | 25.8 | 33.3 |
+| discard after listing, git status and rg | ProjFS Workspace | 5 | 265 | 211 | 607 |
+| rmdir /s /q | full directory copy | 5 | 478 | 419 | 576 |
+| git worktree remove --force | git worktree | 5 | 120 | 119 | 142 |
 <!-- end:end-small -->
 
 <!-- begin:end-medium -->
 | ending a Workspace (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| discard right after mount | ProjFS Workspace | 5 | 31.8 | 26.7 | 116 |
-| discard after listing, git status and rg | ProjFS Workspace | 5 | 14,440 | 9,524 | 20,776 |
-| rmdir /s /q | full directory copy | 5 | 14,335 | 9,154 | 23,689 |
-| git worktree remove --force | git worktree | 5 | 9,691 | 7,021 | 13,838 |
+| discard right after mount | ProjFS Workspace | 5 | 33.1 | 32.0 | 37.1 |
+| discard after listing, git status and rg | ProjFS Workspace | 5 | 13,515 | 10,818 | 17,347 |
+| rmdir /s /q | full directory copy | 5 | 12,546 | 12,182 | 13,338 |
+| git worktree remove --force | git worktree | 5 | 10,194 | 8,316 | 11,037 |
 <!-- end:end-medium -->
 
 Discarding a Workspace that was never used is quick at either size.
@@ -794,8 +1014,8 @@ medium fixture that costs about what deleting a copy costs.
 
 ### 7.4 Commit and status
 
-From the second run. Each sample forks a new Branch, mounts it, appends a
-line to 1, 100 or 1,000 files and runs `commit`. Each case is measured twice:
+Each sample forks a new Branch, mounts it, appends a line to 1, 100 or
+1,000 files and runs `commit`. Each case is measured twice:
 
 - on a **fresh mount**, where almost nothing is on disk;
 - **after use**: after `dir /s` over the whole tree, `git status`, and an
@@ -810,41 +1030,41 @@ edits. It is a different operation and is not a like-for-like comparison.
 <!-- begin:commit-small -->
 | Commit (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 1 file changed, fresh mount: command | ProjFS Workspace | 5 | 22.2 | 18.7 | 90.7 |
-| 1 file changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 8.9 | 7.9 | 58.7 |
-| 1 file changed, after use: command | ProjFS Workspace | 5 | 24.6 | 19.5 | 32.8 |
-| 1 file changed, after use: inside the provider | ProjFS Workspace | 5 | 9.9 | 8.8 | 15.5 |
-| reference: git add + git commit, 1 file | git worktree | 5 | 428 | 182 | 522 |
-| 100 files changed, fresh mount: command | ProjFS Workspace | 5 | 67.7 | 64.7 | 71.9 |
-| 100 files changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 55.7 | 53.7 | 60.2 |
-| 100 files changed, after use: command | ProjFS Workspace | 5 | 69.6 | 68.3 | 74.5 |
-| 100 files changed, after use: inside the provider | ProjFS Workspace | 5 | 56.8 | 55.9 | 62.0 |
-| reference: git add + git commit, 100 files | git worktree | 5 | 400 | 135 | 468 |
-| 1,000 files changed, fresh mount: command | ProjFS Workspace | 5 | 572 | 507 | 680 |
-| 1,000 files changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 558 | 496 | 666 |
-| 1,000 files changed, after use: command | ProjFS Workspace | 5 | 622 | 489 | 887 |
-| 1,000 files changed, after use: inside the provider | ProjFS Workspace | 5 | 604 | 473 | 868 |
-| reference: git add + git commit, 1,000 files | git worktree | 5 | 632 | 511 | 852 |
+| 1 file changed, fresh mount: command | ProjFS Workspace | 5 | 22.2 | 20.2 | 43.4 |
+| 1 file changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 9.3 | 8.3 | 16.0 |
+| 1 file changed, after use: command | ProjFS Workspace | 5 | 21.3 | 20.4 | 27.7 |
+| 1 file changed, after use: inside the provider | ProjFS Workspace | 5 | 9.9 | 9.9 | 14.2 |
+| reference: git add + git commit, 1 file | git worktree | 5 | 389 | 224 | 415 |
+| 100 files changed, fresh mount: command | ProjFS Workspace | 5 | 69.0 | 67.7 | 70.2 |
+| 100 files changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 56.0 | 55.4 | 56.7 |
+| 100 files changed, after use: command | ProjFS Workspace | 5 | 67.4 | 63.4 | 85.3 |
+| 100 files changed, after use: inside the provider | ProjFS Workspace | 5 | 55.5 | 51.4 | 71.2 |
+| reference: git add + git commit, 100 files | git worktree | 5 | 518 | 390 | 578 |
+| 1,000 files changed, fresh mount: command | ProjFS Workspace | 5 | 514 | 494 | 656 |
+| 1,000 files changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 501 | 481 | 644 |
+| 1,000 files changed, after use: command | ProjFS Workspace | 5 | 472 | 439 | 800 |
+| 1,000 files changed, after use: inside the provider | ProjFS Workspace | 5 | 460 | 425 | 784 |
+| reference: git add + git commit, 1,000 files | git worktree | 5 | 2,341 | 1,904 | 2,389 |
 <!-- end:commit-small -->
 
 <!-- begin:commit-medium -->
 | Commit (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 1 file changed, fresh mount: command | ProjFS Workspace | 5 | 33.4 | 31.2 | 35.9 |
-| 1 file changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 15.2 | 13.9 | 15.6 |
-| 1 file changed, after use: command | ProjFS Workspace | 5 | 133 | 127 | 143 |
-| 1 file changed, after use: inside the provider | ProjFS Workspace | 5 | 111 | 109 | 125 |
-| reference: git add + git commit, 1 file | git worktree | 5 | 740 | 681 | 853 |
-| 100 files changed, fresh mount: command | ProjFS Workspace | 5 | 115 | 111 | 119 |
-| 100 files changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 102 | 99.6 | 107 |
-| 100 files changed, after use: command | ProjFS Workspace | 5 | 292 | 267 | 363 |
-| 100 files changed, after use: inside the provider | ProjFS Workspace | 5 | 273 | 255 | 341 |
-| reference: git add + git commit, 100 files | git worktree | 5 | 824 | 733 | 1,030 |
-| 1,000 files changed, fresh mount: command | ProjFS Workspace | 5 | 1,344 | 1,075 | 1,550 |
-| 1,000 files changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 1,330 | 1,063 | 1,537 |
-| 1,000 files changed, after use: command | ProjFS Workspace | 5 | 1,621 | 1,598 | 1,650 |
-| 1,000 files changed, after use: inside the provider | ProjFS Workspace | 5 | 1,606 | 1,577 | 1,632 |
-| reference: git add + git commit, 1,000 files | git worktree | 5 | 993 | 538 | 1,191 |
+| 1 file changed, fresh mount: command | ProjFS Workspace | 5 | 37.3 | 22.1 | 39.7 |
+| 1 file changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 19.4 | 11.4 | 20.6 |
+| 1 file changed, after use: command | ProjFS Workspace | 5 | 153 | 147 | 172 |
+| 1 file changed, after use: inside the provider | ProjFS Workspace | 5 | 132 | 130 | 151 |
+| reference: git add + git commit, 1 file | git worktree | 5 | 730 | 611 | 836 |
+| 100 files changed, fresh mount: command | ProjFS Workspace | 5 | 124 | 118 | 133 |
+| 100 files changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 113 | 106 | 120 |
+| 100 files changed, after use: command | ProjFS Workspace | 5 | 307 | 303 | 313 |
+| 100 files changed, after use: inside the provider | ProjFS Workspace | 5 | 287 | 282 | 296 |
+| reference: git add + git commit, 100 files | git worktree | 5 | 1,076 | 979 | 1,108 |
+| 1,000 files changed, fresh mount: command | ProjFS Workspace | 5 | 1,426 | 1,149 | 1,551 |
+| 1,000 files changed, fresh mount: inside the provider | ProjFS Workspace | 5 | 1,414 | 1,136 | 1,533 |
+| 1,000 files changed, after use: command | ProjFS Workspace | 5 | 1,535 | 1,525 | 1,631 |
+| 1,000 files changed, after use: inside the provider | ProjFS Workspace | 5 | 1,516 | 1,504 | 1,611 |
+| reference: git add + git commit, 1,000 files | git worktree | 5 | 2,973 | 2,806 | 12,119 |
 <!-- end:commit-medium -->
 
 `status`, before and after the Commit:
@@ -852,37 +1072,37 @@ edits. It is a different operation and is not a like-for-like comparison.
 <!-- begin:status-small -->
 | status (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| before the edits, after use | ProjFS Workspace | 15 | 25.2 | 18.4 | 32.8 |
-| 1 file changed, fresh mount | ProjFS Workspace | 5 | 19.3 | 17.4 | 48.9 |
-| 1 file changed, after use | ProjFS Workspace | 5 | 10.2 | 9.6 | 16.9 |
-| after the Commit of 1 file, fresh mount | ProjFS Workspace | 5 | 14.5 | 11.1 | 28.1 |
-| after the Commit of 1 file, after use | ProjFS Workspace | 5 | 11.6 | 9.1 | 17.8 |
-| 100 files changed, fresh mount | ProjFS Workspace | 5 | 31.1 | 29.7 | 37.3 |
-| 100 files changed, after use | ProjFS Workspace | 5 | 23.8 | 21.6 | 26.0 |
-| after the Commit of 100 files, fresh mount | ProjFS Workspace | 5 | 10.4 | 8.9 | 14.8 |
-| after the Commit of 100 files, after use | ProjFS Workspace | 5 | 10.7 | 9.3 | 11.8 |
-| 1,000 files changed, fresh mount | ProjFS Workspace | 5 | 137 | 133 | 146 |
-| 1,000 files changed, after use | ProjFS Workspace | 5 | 156 | 129 | 250 |
-| after the Commit of 1,000 files, fresh mount | ProjFS Workspace | 5 | 12.5 | 11.4 | 16.6 |
-| after the Commit of 1,000 files, after use | ProjFS Workspace | 5 | 15.9 | 12.6 | 16.9 |
+| before the edits, after use | ProjFS Workspace | 15 | 31.6 | 26.7 | 36.4 |
+| 1 file changed, fresh mount | ProjFS Workspace | 5 | 19.0 | 17.1 | 34.2 |
+| 1 file changed, after use | ProjFS Workspace | 5 | 10.8 | 9.8 | 13.5 |
+| after the Commit of 1 file, fresh mount | ProjFS Workspace | 5 | 15.7 | 10.0 | 21.3 |
+| after the Commit of 1 file, after use | ProjFS Workspace | 5 | 14.3 | 12.1 | 16.9 |
+| 100 files changed, fresh mount | ProjFS Workspace | 5 | 30.2 | 27.7 | 31.3 |
+| 100 files changed, after use | ProjFS Workspace | 5 | 21.7 | 20.1 | 24.5 |
+| after the Commit of 100 files, fresh mount | ProjFS Workspace | 5 | 15.0 | 9.0 | 18.4 |
+| after the Commit of 100 files, after use | ProjFS Workspace | 5 | 16.3 | 14.6 | 17.3 |
+| 1,000 files changed, fresh mount | ProjFS Workspace | 5 | 109 | 102 | 129 |
+| 1,000 files changed, after use | ProjFS Workspace | 5 | 97.0 | 95.3 | 119 |
+| after the Commit of 1,000 files, fresh mount | ProjFS Workspace | 5 | 15.8 | 14.4 | 18.0 |
+| after the Commit of 1,000 files, after use | ProjFS Workspace | 5 | 16.5 | 11.1 | 18.8 |
 <!-- end:status-small -->
 
 <!-- begin:status-medium -->
 | status (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| before the edits, after use | ProjFS Workspace | 15 | 49.7 | 43.8 | 59.2 |
-| 1 file changed, fresh mount | ProjFS Workspace | 5 | 27.7 | 25.1 | 33.5 |
-| 1 file changed, after use | ProjFS Workspace | 5 | 26.2 | 24.4 | 29.0 |
-| after the Commit of 1 file, fresh mount | ProjFS Workspace | 5 | 16.9 | 15.9 | 17.4 |
-| after the Commit of 1 file, after use | ProjFS Workspace | 5 | 16.3 | 15.9 | 18.0 |
-| 100 files changed, fresh mount | ProjFS Workspace | 5 | 34.6 | 31.0 | 36.4 |
-| 100 files changed, after use | ProjFS Workspace | 5 | 74.2 | 37.3 | 81.2 |
-| after the Commit of 100 files, fresh mount | ProjFS Workspace | 5 | 16.1 | 10.1 | 18.3 |
-| after the Commit of 100 files, after use | ProjFS Workspace | 5 | 16.7 | 15.8 | 17.4 |
-| 1,000 files changed, fresh mount | ProjFS Workspace | 5 | 175 | 159 | 232 |
-| 1,000 files changed, after use | ProjFS Workspace | 5 | 254 | 216 | 321 |
-| after the Commit of 1,000 files, fresh mount | ProjFS Workspace | 5 | 17.3 | 15.3 | 20.3 |
-| after the Commit of 1,000 files, after use | ProjFS Workspace | 5 | 16.4 | 15.7 | 17.1 |
+| before the edits, after use | ProjFS Workspace | 15 | 45.2 | 38.3 | 52.1 |
+| 1 file changed, fresh mount | ProjFS Workspace | 5 | 26.9 | 17.0 | 31.4 |
+| 1 file changed, after use | ProjFS Workspace | 5 | 24.4 | 20.8 | 31.2 |
+| after the Commit of 1 file, fresh mount | ProjFS Workspace | 5 | 15.4 | 9.6 | 16.4 |
+| after the Commit of 1 file, after use | ProjFS Workspace | 5 | 16.4 | 15.0 | 28.1 |
+| 100 files changed, fresh mount | ProjFS Workspace | 5 | 33.3 | 28.8 | 36.9 |
+| 100 files changed, after use | ProjFS Workspace | 5 | 63.4 | 51.6 | 68.5 |
+| after the Commit of 100 files, fresh mount | ProjFS Workspace | 5 | 15.2 | 10.6 | 16.7 |
+| after the Commit of 100 files, after use | ProjFS Workspace | 5 | 17.2 | 15.1 | 18.9 |
+| 1,000 files changed, fresh mount | ProjFS Workspace | 5 | 134 | 128 | 142 |
+| 1,000 files changed, after use | ProjFS Workspace | 5 | 250 | 169 | 317 |
+| after the Commit of 1,000 files, fresh mount | ProjFS Workspace | 5 | 16.5 | 16.2 | 16.6 |
+| after the Commit of 1,000 files, after use | ProjFS Workspace | 5 | 15.7 | 14.9 | 18.3 |
 <!-- end:status-medium -->
 
 <!-- begin:commit-bytes-small -->
@@ -891,9 +1111,9 @@ edits. It is a different operation and is not a like-for-like comparison.
 | 1 file, fresh mount: read from disk | ProjFS Workspace | 5 | 0.0 | 0.0 | 0.0 |
 | 100 files, fresh mount: read from disk | ProjFS Workspace | 5 | 0.4 | 0.4 | 0.4 |
 | 1,000 files, fresh mount: read from disk | ProjFS Workspace | 5 | 4.2 | 4.2 | 4.2 |
-| 1 file, after use: read from disk | ProjFS Workspace | 5 | 0.0 | 0.0 | 0.0 |
-| 100 files, after use: read from disk | ProjFS Workspace | 5 | 0.4 | 0.4 | 0.4 |
-| 1,000 files, after use: read from disk | ProjFS Workspace | 5 | 4.2 | 4.2 | 4.2 |
+| 1 file, after use: read from disk | ProjFS Workspace | 5 | 0.1 | 0.1 | 0.1 |
+| 100 files, after use: read from disk | ProjFS Workspace | 5 | 0.5 | 0.5 | 0.5 |
+| 1,000 files, after use: read from disk | ProjFS Workspace | 5 | 4.3 | 4.3 | 4.3 |
 | 1 file, fresh mount: written to the overlay | ProjFS Workspace | 5 | 0.0 | 0.0 | 0.0 |
 | 100 files, fresh mount: written to the overlay | ProjFS Workspace | 5 | 0.4 | 0.4 | 0.4 |
 | 1,000 files, fresh mount: written to the overlay | ProjFS Workspace | 5 | 4.2 | 4.2 | 4.2 |
@@ -917,51 +1137,60 @@ What the tables show:
 
 - **A Commit after use costs what it costs on a fresh mount, plus what the
   use itself changed.** On the small fixture the two are level at every
-  size. On the medium fixture a Commit of one changed file takes 33.4 ms on
-  a fresh mount and 133 ms after use, and the bytes table says why: after
+  size. On the medium fixture a Commit of one changed file takes 37.3 ms on
+  a fresh mount and 153 ms after use, and the bytes table says why: after
   use it reads 5.8 MiB instead of a few bytes. `git status` rewrote its own
   index, `.git/index`, and a LayerFS Commit holds `.git` like everything
   else. The same 5.8 MiB is in the 100 and 1,000 file cases.
 - **Status does not grow with what is on disk.** After the whole medium tree
-  was listed and searched, with 51,196 files holding content on disk (7.5),
-  a status takes 49.7 ms before the edits and 26.2 ms with one file changed.
-- **Status after a Commit is flat**: 16 to 18 ms on the medium fixture,
+  was listed and searched, with 51,194 files holding content on disk (7.5),
+  a status takes 45.2 ms before the edits and 24.4 ms with one file changed.
+- **Status after a Commit is flat**: 15 to 17 ms on the medium fixture,
   whatever was committed.
 - **Commit time follows the number and size of the changed files**: on the
-  medium fixture 33.4 ms, 115 ms and 1,344 ms for 1, 100 and 1,000 files on
+  medium fixture 37.3 ms, 124 ms and 1,426 ms for 1, 100 and 1,000 files on
   a fresh mount.
+- A status with many changes pending is slower after use than on a fresh
+  mount: 63.4 ms against 33.3 ms for 100 files, 250 ms against 134 ms for
+  1,000. Git's rewritten index, which a status compares byte by byte, is
+  part of that. The rest was not looked into.
 - Bytes read and bytes written to the overlay are equal on a fresh mount:
   every changed file is read once from NTFS and copied once into the
   overlay. That copy is the price of design choice 3.
 
-**Against the code before the review.** The two runs cannot be compared for
-these cases: each run adds Branches and Commits to the fixture's Store, so
-the second worked on a larger Store than the first. `bench/compare-commit.ps1`
-therefore takes the two release binaries (`bbf880c68` and the final code)
-and alternates them on the same Commit of the medium fixture, on a fresh
-mount. Its output is in `bench/results/compare/`:
+**Against the code before the reviews.** Two runs of `run.ps1` cannot be
+compared for these cases: the fixtures differ from run to run (7.8), and
+within one run every sample adds Branches and Commits to the Store.
+`bench/compare-commit.ps1` therefore takes two release binaries, the one of
+`bbf880c68` (before the first review) and the one of the last commit,
+`ff02d795f`, both built with rustc 1.85.1, and alternates them on the same
+Commit of the medium fixture, on a fresh mount. It was run after the
+benchmark, on the Store that run had made, with no other build or test
+running before or between its three sizes. Its output is in
+`bench/results/compare/`:
 
 <!-- begin:compare -->
 | the same Commit by two builds (ms) | build | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Commit, 1 file changed | before the review | 5 | 44.8 | 37.8 | 49.9 |
-| Commit, 1 file changed | after the review | 5 | 41.8 | 39.7 | 43.9 |
-| status after the Commit of 1 file | before the review | 5 | 20.5 | 20.2 | 21.5 |
-| status after the Commit of 1 file | after the review | 5 | 17.4 | 16.9 | 19.1 |
-| Commit, 100 files changed | before the review | 5 | 117 | 108 | 122 |
-| Commit, 100 files changed | after the review | 5 | 121 | 114 | 183 |
-| status after the Commit of 100 files | before the review | 5 | 59.8 | 56.9 | 69.0 |
-| status after the Commit of 100 files | after the review | 5 | 13.8 | 10.0 | 17.4 |
-| Commit, 1,000 files changed | before the review | 5 | 882 | 794 | 1,448 |
-| Commit, 1,000 files changed | after the review | 5 | 816 | 790 | 1,182 |
-| status after the Commit of 1,000 files | before the review | 5 | 491 | 287 | 494 |
-| status after the Commit of 1,000 files | after the review | 5 | 13.0 | 10.3 | 17.3 |
+| Commit, 1 file changed | before the reviews | 5 | 43.0 | 41.6 | 66.8 |
+| Commit, 1 file changed | the final code | 5 | 46.2 | 44.2 | 49.2 |
+| status after the Commit of 1 file | before the reviews | 5 | 20.4 | 19.3 | 23.8 |
+| status after the Commit of 1 file | the final code | 5 | 18.4 | 17.1 | 20.1 |
+| Commit, 100 files changed | before the reviews | 5 | 126 | 120 | 152 |
+| Commit, 100 files changed | the final code | 5 | 141 | 125 | 572 |
+| status after the Commit of 100 files | before the reviews | 5 | 58.1 | 55.9 | 80.3 |
+| status after the Commit of 100 files | the final code | 5 | 12.8 | 10.1 | 16.5 |
+| Commit, 1,000 files changed | before the reviews | 5 | 957 | 778 | 1,541 |
+| Commit, 1,000 files changed | the final code | 5 | 857 | 807 | 1,449 |
+| status after the Commit of 1,000 files | before the reviews | 5 | 517 | 264 | 560 |
+| status after the Commit of 1,000 files | the final code | 5 | 18.0 | 10.4 | 20.8 |
 <!-- end:compare -->
 
-The Commit itself costs the same before and after the review at each size;
-the ranges overlap. What changed is the status after a Commit. Before the
-review it read every committed file again, because a full file was always
-"possibly changed": 491 ms after a Commit of 1,000 files. It is now 13.0 ms.
+The Commit itself costs the same before and after at each size: the ranges
+overlap, and each build has one sample far above its others. What changed
+is the status after a Commit. Before the reviews it read every committed
+file again, because a full file was always "possibly changed": 517 ms after
+a Commit of 1,000 files. It is now 18.0 ms.
 
 The provider after a Commit. Its CPU time is counted from its start, so
 after use it is mostly the listing and the search, not the Commit:
@@ -969,45 +1198,45 @@ after use it is mostly the listing and the search, not the Commit:
 <!-- begin:commit-memory-small -->
 | provider memory after a Commit, peak working set (MiB) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 1 file, fresh mount | ProjFS Workspace | 5 | 21.8 | 21.8 | 21.8 |
-| 1 file, after use | ProjFS Workspace | 5 | 25.0 | 24.9 | 25.1 |
-| 100 files, fresh mount | ProjFS Workspace | 5 | 24.1 | 24.1 | 24.4 |
-| 100 files, after use | ProjFS Workspace | 5 | 27.2 | 26.9 | 27.2 |
-| 1,000 files, fresh mount | ProjFS Workspace | 5 | 31.1 | 31.0 | 31.3 |
-| 1,000 files, after use | ProjFS Workspace | 5 | 33.1 | 32.6 | 33.3 |
+| 1 file, fresh mount | ProjFS Workspace | 5 | 21.8 | 21.7 | 21.9 |
+| 1 file, after use | ProjFS Workspace | 5 | 24.6 | 24.3 | 25.4 |
+| 100 files, fresh mount | ProjFS Workspace | 5 | 24.4 | 24.1 | 24.5 |
+| 100 files, after use | ProjFS Workspace | 5 | 26.3 | 26.3 | 26.4 |
+| 1,000 files, fresh mount | ProjFS Workspace | 5 | 33.3 | 33.1 | 33.7 |
+| 1,000 files, after use | ProjFS Workspace | 5 | 32.6 | 32.3 | 32.8 |
 <!-- end:commit-memory-small -->
 
 <!-- begin:commit-memory-medium -->
 | provider memory after a Commit, peak working set (MiB) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 1 file, fresh mount | ProjFS Workspace | 5 | 22.2 | 22.1 | 22.3 |
-| 1 file, after use | ProjFS Workspace | 5 | 49.6 | 49.4 | 50.4 |
-| 100 files, fresh mount | ProjFS Workspace | 5 | 30.8 | 30.6 | 30.9 |
-| 100 files, after use | ProjFS Workspace | 5 | 54.0 | 53.6 | 54.5 |
-| 1,000 files, fresh mount | ProjFS Workspace | 5 | 37.7 | 37.2 | 37.8 |
-| 1,000 files, after use | ProjFS Workspace | 5 | 57.4 | 56.8 | 57.7 |
+| 1 file, fresh mount | ProjFS Workspace | 5 | 24.0 | 23.8 | 24.2 |
+| 1 file, after use | ProjFS Workspace | 5 | 50.2 | 49.8 | 51.3 |
+| 100 files, fresh mount | ProjFS Workspace | 5 | 32.4 | 32.2 | 32.6 |
+| 100 files, after use | ProjFS Workspace | 5 | 54.3 | 53.5 | 54.5 |
+| 1,000 files, fresh mount | ProjFS Workspace | 5 | 42.0 | 41.5 | 42.5 |
+| 1,000 files, after use | ProjFS Workspace | 5 | 57.2 | 56.9 | 57.4 |
 <!-- end:commit-memory-medium -->
 
 <!-- begin:commit-cpu-small -->
 | provider CPU time after a Commit (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
 | 1 file, fresh mount | ProjFS Workspace | 5 | 31.2 | 15.6 | 62.5 |
-| 1 file, after use | ProjFS Workspace | 5 | 938 | 828 | 1,266 |
-| 100 files, fresh mount | ProjFS Workspace | 5 | 156 | 125 | 188 |
-| 100 files, after use | ProjFS Workspace | 5 | 969 | 766 | 1,094 |
-| 1,000 files, fresh mount | ProjFS Workspace | 5 | 1,125 | 922 | 1,266 |
-| 1,000 files, after use | ProjFS Workspace | 5 | 1,719 | 1,516 | 2,172 |
+| 1 file, after use | ProjFS Workspace | 5 | 922 | 891 | 1,234 |
+| 100 files, fresh mount | ProjFS Workspace | 5 | 141 | 93.8 | 156 |
+| 100 files, after use | ProjFS Workspace | 5 | 922 | 750 | 1,156 |
+| 1,000 files, fresh mount | ProjFS Workspace | 5 | 1,047 | 953 | 1,188 |
+| 1,000 files, after use | ProjFS Workspace | 5 | 1,562 | 1,266 | 1,875 |
 <!-- end:commit-cpu-small -->
 
 <!-- begin:commit-cpu-medium -->
 | provider CPU time after a Commit (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 1 file, fresh mount | ProjFS Workspace | 5 | 62.5 | 15.6 | 78.1 |
-| 1 file, after use | ProjFS Workspace | 5 | 43,953 | 39,750 | 53,984 |
-| 100 files, fresh mount | ProjFS Workspace | 5 | 281 | 234 | 297 |
-| 100 files, after use | ProjFS Workspace | 5 | 42,609 | 41,750 | 48,531 |
-| 1,000 files, fresh mount | ProjFS Workspace | 5 | 2,156 | 1,891 | 2,406 |
-| 1,000 files, after use | ProjFS Workspace | 5 | 43,094 | 41,156 | 48,656 |
+| 1 file, fresh mount | ProjFS Workspace | 5 | 62.5 | 31.2 | 78.1 |
+| 1 file, after use | ProjFS Workspace | 5 | 40,484 | 39,469 | 42,781 |
+| 100 files, fresh mount | ProjFS Workspace | 5 | 297 | 234 | 375 |
+| 100 files, after use | ProjFS Workspace | 5 | 43,547 | 43,062 | 46,828 |
+| 1,000 files, fresh mount | ProjFS Workspace | 5 | 2,203 | 1,625 | 2,422 |
+| 1,000 files, after use | ProjFS Workspace | 5 | 41,562 | 41,125 | 49,875 |
 <!-- end:commit-cpu-medium -->
 
 ### 7.5 Disk and memory
@@ -1020,11 +1249,11 @@ One Workspace, measured after each step of the session in 7.2:
 | after a full listing: content bytes | ProjFS Workspace | 5 | 0.0 | 0.0 | 0.0 |
 | after git status: content bytes | ProjFS Workspace | 5 | 0.1 | 0.1 | 0.1 |
 | after rg: content bytes | ProjFS Workspace | 5 | 4.3 | 4.3 | 4.3 |
-| after rg: volume free space used | ProjFS Workspace | 5 | 64.0 | 64.0 | 64.5 |
+| after rg: volume free space used | ProjFS Workspace | 5 | 64.0 | 63.9 | 64.4 |
 | the copy: content bytes | full directory copy | 5 | 5.4 | 5.4 | 5.4 |
-| the copy: volume free space used | full directory copy | 5 | 11.9 | 2.9 | 12.4 |
+| the copy: volume free space used | full directory copy | 5 | 12.0 | 11.9 | 12.5 |
 | the worktree: content bytes | git worktree | 5 | 4.2 | 4.2 | 4.2 |
-| the worktree: volume free space used | git worktree | 5 | 6.9 | 6.4 | 7.2 |
+| the worktree: volume free space used | git worktree | 5 | 6.4 | 6.3 | 6.8 |
 <!-- end:disk-one-small -->
 
 <!-- begin:disk-count-small -->
@@ -1034,7 +1263,7 @@ One Workspace, measured after each step of the session in 7.2:
 | after a full listing: files with content | ProjFS Workspace | 5 | 0 | 0 | 0 |
 | after git status: files with content | ProjFS Workspace | 5 | 7 | 7 | 7 |
 | after git status: files without content | ProjFS Workspace | 5 | 0 | 0 | 0 |
-| after rg: files with content | ProjFS Workspace | 5 | 1,007 | 1,007 | 1,007 |
+| after rg: files with content | ProjFS Workspace | 5 | 1,006 | 1,006 | 1,006 |
 | after rg: files without content | ProjFS Workspace | 5 | 0 | 0 | 0 |
 <!-- end:disk-count-small -->
 
@@ -1042,13 +1271,13 @@ One Workspace, measured after each step of the session in 7.2:
 | one Workspace on disk (MiB) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
 | after a full listing: content bytes | ProjFS Workspace | 5 | 0.0 | 0.0 | 0.0 |
-| after git status: content bytes | ProjFS Workspace | 5 | 44.0 | 44.0 | 44.0 |
+| after git status: content bytes | ProjFS Workspace | 5 | 45.4 | 45.4 | 45.4 |
 | after rg: content bytes | ProjFS Workspace | 5 | 188.6 | 188.6 | 188.6 |
-| after rg: volume free space used | ProjFS Workspace | 5 | 3,320.1 | 3,143.7 | 3,333.3 |
+| after rg: volume free space used | ProjFS Workspace | 5 | 3,320.6 | 3,317.0 | 3,545.0 |
 | the copy: content bytes | full directory copy | 5 | 189.6 | 189.6 | 189.6 |
-| the copy: volume free space used | full directory copy | 5 | 87.7 | -115,818.7 | 268.7 |
+| the copy: volume free space used | full directory copy | 5 | 269.1 | 265.2 | 276.1 |
 | the worktree: content bytes | git worktree | 5 | 145.4 | 145.4 | 145.4 |
-| the worktree: volume free space used | git worktree | 5 | 223.6 | -3,567.1 | 226.9 |
+| the worktree: volume free space used | git worktree | 5 | 227.9 | 28.1 | 230.4 |
 <!-- end:disk-one-medium -->
 
 <!-- begin:disk-count-medium -->
@@ -1056,9 +1285,9 @@ One Workspace, measured after each step of the session in 7.2:
 | --- | --- | ---: | ---: | ---: | ---: |
 | after a full listing: directories | ProjFS Workspace | 5 | 3,790 | 3,790 | 3,790 |
 | after a full listing: files with content | ProjFS Workspace | 5 | 0 | 0 | 0 |
-| after git status: files with content | ProjFS Workspace | 5 | 42 | 42 | 42 |
+| after git status: files with content | ProjFS Workspace | 5 | 1,416 | 1,416 | 1,416 |
 | after git status: files without content | ProjFS Workspace | 5 | 0 | 0 | 0 |
-| after rg: files with content | ProjFS Workspace | 5 | 51,196 | 51,196 | 51,196 |
+| after rg: files with content | ProjFS Workspace | 5 | 51,194 | 51,194 | 51,194 |
 | after rg: files without content | ProjFS Workspace | 5 | 0 | 0 | 0 |
 <!-- end:disk-count-medium -->
 
@@ -1066,8 +1295,8 @@ One Workspace, measured after each step of the session in 7.2:
 disk (counted by the provider for a Workspace, by `Get-ChildItem` for a copy
 or worktree). "Volume free space used" is the volume's free space before
 minus after. It includes everything else the system wrote or freed in that
-time, which is why it can be negative; one sample of the medium copy saw the
-volume gain over 100 GiB from some other activity. Read it as a rough
+time, so one sample can be far off: one worktree sample of the medium
+fixture shows 28 MiB where the others show about 228. Read it as a rough
 cross-check, not as a measurement of one directory.
 
 **A hydrated file holds whole units of 64 KiB on the volume.** The free
@@ -1125,15 +1354,16 @@ the baseline update and keep old content after the Branch moves. A product
 could make the trade with a durable record of which full files are
 unchanged copies. That is not built here.
 
-So the provider is unchanged, the M3 disk cases were not rerun, and the
-numbers in this section stand. The observations are asserted by
+So the provider keeps hydrated files as placeholders, and the numbers of
+this section show the cost. The observations are asserted by
 `tests/allocation.rs`; the raw output of the probes is
 `results/allocation-probe.txt`.
 
 A listing alone puts directories on disk and no file content. After
-`git status` on the medium fixture 42 files have content. Which files was not
-listed; their size is that of `.git` almost exactly (compare "bytes" and
-"with `.git`" in 7.1), which fits Git reading its own index and pack.
+`git status` on the medium fixture 1,416 files have content, 45.4 MiB. Which
+files was not listed. The size of `.git` is 44.2 MiB (compare "bytes" and
+"with `.git`" in 7.1), which fits Git reading its own index and pack, and
+the rest the working files it did not trust the times of (7.2).
 
 1, 4 and 16 Workspaces, each mounted, listed once and `git status` run once,
 against 1, 4 and 16 copies and worktrees:
@@ -1142,90 +1372,91 @@ against 1, 4 and 16 copies and worktrees:
 | 1, 4 and 16 on disk (MiB) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
 | 1 Workspace: content bytes | ProjFS Workspace | 5 | 0.1 | 0.1 | 0.1 |
-| 1 Workspace: volume free space used | ProjFS Workspace | 5 | 0.8 | -2.7 | 1.3 |
+| 1 Workspace: volume free space used | ProjFS Workspace | 5 | 0.9 | 0.8 | 0.9 |
 | 1 copy: content bytes | full directory copy | 5 | 5.4 | 5.4 | 5.4 |
-| 1 copy: volume free space used | full directory copy | 5 | 30.5 | 25.1 | 35.0 |
+| 1 copy: volume free space used | full directory copy | 5 | 35.0 | 25.9 | 45.2 |
 | 1 worktree: content bytes | git worktree | 5 | 4.2 | 4.2 | 4.2 |
-| 1 worktree: volume free space used | git worktree | 5 | 6.4 | -1.1 | 6.9 |
+| 1 worktree: volume free space used | git worktree | 5 | 6.9 | 6.4 | 14.9 |
 | 4 Workspaces: content bytes | ProjFS Workspace | 5 | 0.3 | 0.3 | 0.3 |
-| 4 Workspaces: volume free space used | ProjFS Workspace | 5 | 3.3 | -6.8 | 3.3 |
+| 4 Workspaces: volume free space used | ProjFS Workspace | 5 | 3.8 | 3.4 | 12.0 |
 | 4 copies: content bytes | full directory copy | 5 | 21.5 | 21.5 | 21.5 |
-| 4 copies: volume free space used | full directory copy | 5 | 113.7 | 108.4 | 127.3 |
+| 4 copies: volume free space used | full directory copy | 5 | 111.0 | 106.0 | 117.4 |
 | 4 worktrees: content bytes | git worktree | 5 | 16.8 | 16.8 | 16.8 |
-| 4 worktrees: volume free space used | git worktree | 5 | 26.6 | 26.5 | 26.6 |
+| 4 worktrees: volume free space used | git worktree | 5 | 26.5 | 10.1 | 26.5 |
 | 16 Workspaces: content bytes | ProjFS Workspace | 5 | 1.3 | 1.3 | 1.3 |
-| 16 Workspaces: volume free space used | ProjFS Workspace | 5 | 13.9 | 7.3 | 14.0 |
+| 16 Workspaces: volume free space used | ProjFS Workspace | 5 | 13.7 | 6.8 | 15.3 |
 | 16 copies: content bytes | full directory copy | 5 | 86.1 | 86.1 | 86.1 |
-| 16 copies: volume free space used | full directory copy | 5 | 455.8 | 408.3 | 463.4 |
+| 16 copies: volume free space used | full directory copy | 5 | 457.3 | 454.3 | 464.9 |
 | 16 worktrees: content bytes | git worktree | 5 | 67.3 | 67.3 | 67.3 |
-| 16 worktrees: volume free space used | git worktree | 5 | 97.0 | 83.0 | 101.5 |
+| 16 worktrees: volume free space used | git worktree | 5 | 101.5 | 89.5 | 106.0 |
 <!-- end:disk-many-small -->
 
 <!-- begin:disk-many-medium -->
 | 1, 4 and 16 on disk (MiB) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 1 Workspace: content bytes | ProjFS Workspace | 5 | 44.0 | 44.0 | 44.0 |
-| 1 Workspace: volume free space used | ProjFS Workspace | 5 | 50.4 | 50.1 | 51.1 |
+| 1 Workspace: content bytes | ProjFS Workspace | 5 | 45.4 | 45.4 | 45.4 |
+| 1 Workspace: volume free space used | ProjFS Workspace | 5 | 138.3 | 129.8 | 138.8 |
 | 1 copy: content bytes | full directory copy | 5 | 189.6 | 189.6 | 189.6 |
-| 1 copy: volume free space used | full directory copy | 5 | 287.0 | 265.9 | 297.9 |
+| 1 copy: volume free space used | full directory copy | 5 | 301.5 | 291.0 | 312.6 |
 | 1 worktree: content bytes | git worktree | 5 | 145.4 | 145.4 | 145.4 |
-| 1 worktree: volume free space used | git worktree | 5 | 232.0 | 227.2 | 237.6 |
-| 4 Workspaces: content bytes | ProjFS Workspace | 5 | 175.9 | 175.9 | 175.9 |
-| 4 Workspaces: volume free space used | ProjFS Workspace | 5 | 194.1 | 193.0 | 204.5 |
+| 1 worktree: volume free space used | git worktree | 5 | 239.6 | 229.8 | 272.4 |
+| 4 Workspaces: content bytes | ProjFS Workspace | 5 | 181.7 | 181.7 | 181.7 |
+| 4 Workspaces: volume free space used | ProjFS Workspace | 5 | 546.8 | 393.2 | 588.0 |
 | 4 copies: content bytes | full directory copy | 1 | 758.3 | 758.3 | 758.3 |
-| 4 copies: volume free space used | full directory copy | 1 | 1,156.7 | 1,156.7 | 1,156.7 |
+| 4 copies: volume free space used | full directory copy | 1 | 1,208.0 | 1,208.0 | 1,208.0 |
 | 4 worktrees: content bytes | git worktree | 1 | 581.5 | 581.5 | 581.5 |
-| 4 worktrees: volume free space used | git worktree | 1 | 902.9 | 902.9 | 902.9 |
-| 16 Workspaces: content bytes | ProjFS Workspace | 5 | 703.7 | 703.7 | 703.7 |
-| 16 Workspaces: volume free space used | ProjFS Workspace | 5 | 793.4 | 791.2 | 800.5 |
+| 4 worktrees: volume free space used | git worktree | 1 | 904.6 | 904.6 | 904.6 |
+| 16 Workspaces: content bytes | ProjFS Workspace | 5 | 726.9 | 726.9 | 726.9 |
+| 16 Workspaces: volume free space used | ProjFS Workspace | 5 | 2,197.2 | 2,176.4 | 2,267.4 |
 | 16 copies: content bytes | full directory copy | 1 | 3,033.1 | 3,033.1 | 3,033.1 |
-| 16 copies: volume free space used | full directory copy | 1 | 4,621.4 | 4,621.4 | 4,621.4 |
+| 16 copies: volume free space used | full directory copy | 1 | 5,045.6 | 5,045.6 | 5,045.6 |
 | 16 worktrees: content bytes | git worktree | 1 | 2,325.9 | 2,325.9 | 2,325.9 |
-| 16 worktrees: volume free space used | git worktree | 1 | 3,665.4 | 3,665.4 | 3,665.4 |
+| 16 worktrees: volume free space used | git worktree | 1 | 4,548.7 | 4,548.7 | 4,548.7 |
 <!-- end:disk-many-medium -->
 
 Workspaces share nothing on disk but the Store, so the cost is linear in
 their number, and each holds only what was looked at. On the medium fixture
-the 4 and 16 copies and worktrees were measured once (`n` = 1).
+the 4 and 16 copies and worktrees were measured once (`n` = 1), and the
+other session's tests began while the 16 were being made: their "volume
+free space used" includes whatever that session wrote.
 
 Provider memory and CPU:
 
 <!-- begin:memory-small -->
 | provider memory, peak working set (MiB) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| right after mount | ProjFS Workspace | 5 | 17.8 | 17.7 | 18.0 |
-| after listing, git status and rg | ProjFS Workspace | 5 | 21.5 | 21.3 | 21.7 |
-| sum over 1 provider, each listed and git status | ProjFS Workspace | 5 | 20.9 | 20.8 | 21.0 |
-| sum over 4 providers, each listed and git status | ProjFS Workspace | 5 | 83.6 | 83.4 | 83.7 |
-| sum over 16 providers, each listed and git status | ProjFS Workspace | 5 | 334.1 | 333.9 | 334.5 |
+| right after mount | ProjFS Workspace | 5 | 17.5 | 17.4 | 17.5 |
+| after listing, git status and rg | ProjFS Workspace | 5 | 21.5 | 21.3 | 21.5 |
+| sum over 1 provider, each listed and git status | ProjFS Workspace | 5 | 20.6 | 20.6 | 20.7 |
+| sum over 4 providers, each listed and git status | ProjFS Workspace | 5 | 82.6 | 82.5 | 82.7 |
+| sum over 16 providers, each listed and git status | ProjFS Workspace | 5 | 330.8 | 330.5 | 331.0 |
 <!-- end:memory-small -->
 
 <!-- begin:memory-medium -->
 | provider memory, peak working set (MiB) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| right after mount | ProjFS Workspace | 5 | 18.3 | 18.2 | 18.5 |
-| after listing, git status and rg | ProjFS Workspace | 5 | 52.5 | 51.7 | 52.8 |
-| sum over 1 provider, each listed and git status | ProjFS Workspace | 5 | 41.8 | 41.8 | 42.0 |
-| sum over 4 providers, each listed and git status | ProjFS Workspace | 5 | 167.3 | 166.8 | 167.7 |
-| sum over 16 providers, each listed and git status | ProjFS Workspace | 5 | 670.1 | 669.0 | 670.6 |
+| right after mount | ProjFS Workspace | 5 | 17.6 | 17.6 | 17.7 |
+| after listing, git status and rg | ProjFS Workspace | 5 | 53.7 | 53.2 | 54.1 |
+| sum over 1 provider, each listed and git status | ProjFS Workspace | 5 | 42.0 | 41.5 | 42.2 |
+| sum over 4 providers, each listed and git status | ProjFS Workspace | 5 | 167.3 | 167.0 | 168.3 |
+| sum over 16 providers, each listed and git status | ProjFS Workspace | 5 | 670.2 | 669.7 | 671.4 |
 <!-- end:memory-medium -->
 
 <!-- begin:cpu-small -->
 | provider CPU time (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| right after mount | ProjFS Workspace | 5 | 15.6 | 15.6 | 46.9 |
-| after listing, git status and rg | ProjFS Workspace | 5 | 1,125 | 984 | 1,281 |
+| right after mount | ProjFS Workspace | 5 | 15.6 | 15.6 | 31.2 |
+| after listing, git status and rg | ProjFS Workspace | 5 | 1,234 | 1,031 | 1,344 |
 <!-- end:cpu-small -->
 
 <!-- begin:cpu-medium -->
 | provider CPU time (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| right after mount | ProjFS Workspace | 5 | 31.2 | 15.6 | 109 |
-| after listing, git status and rg | ProjFS Workspace | 5 | 55,734 | 45,078 | 61,500 |
+| right after mount | ProjFS Workspace | 5 | 31.2 | 31.2 | 46.9 |
+| after listing, git status and rg | ProjFS Workspace | 5 | 48,266 | 48,016 | 54,016 |
 <!-- end:cpu-medium -->
 
-These two tables are from the first run. The provider after a Commit is in
-7.4, from the second.
+The provider after a Commit is in 7.4.
 
 Memory is the provider process's peak working set; it holds directory
 listings and no file content. CPU time is the provider's own, user plus
@@ -1234,55 +1465,60 @@ provider serving the listing and then every file's bytes for `rg`.
 
 ### 7.6 A build inside the Workspace
 
-From the second run. `cargo build --offline --locked` of ripgrep 14.1.1
-with its `target` directory inside the tree, then an incremental build after
-appending a comment to `crates\core\main.rs`.
+`cargo build --offline --locked` of ripgrep 14.1.1 with its `target`
+directory inside the tree, then an incremental build after appending a
+comment to `crates\core\main.rs`.
 
 <!-- begin:build -->
 | cargo build of ripgrep (ms) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| full build | ProjFS Workspace | 5 | 12,063 | 10,931 | 16,495 |
-| full build | full directory copy | 5 | 11,451 | 11,285 | 11,756 |
-| full build | git worktree | 5 | 11,356 | 11,200 | 11,612 |
-| incremental build | ProjFS Workspace | 5 | 2,919 | 2,755 | 3,031 |
-| incremental build | full directory copy | 5 | 2,338 | 1,694 | 2,531 |
-| incremental build | git worktree | 5 | 2,459 | 2,290 | 2,626 |
-| Commit of the Workspace with its target directory | ProjFS Workspace | 5 | 8,561 | 8,391 | 9,790 |
-| discard after the build and Commit | ProjFS Workspace | 5 | 527 | 508 | 753 |
+| full build | ProjFS Workspace | 5 | 11,232 | 11,144 | 13,724 |
+| full build | full directory copy | 5 | 10,913 | 10,179 | 10,984 |
+| full build | git worktree | 5 | 11,013 | 10,300 | 11,246 |
+| incremental build | ProjFS Workspace | 5 | 2,355 | 2,085 | 2,484 |
+| incremental build | full directory copy | 5 | 1,928 | 1,757 | 1,996 |
+| incremental build | git worktree | 5 | 1,860 | 1,770 | 1,986 |
+| Commit of the Workspace with its target directory | ProjFS Workspace | 5 | 12,236 | 11,904 | 14,512 |
+| discard after the build and Commit | ProjFS Workspace | 5 | 542 | 538 | 656 |
 <!-- end:build -->
 
 <!-- begin:build-disk -->
 | after the build (MiB) | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Workspace: content bytes on disk | ProjFS Workspace | 5 | 456.0 | 456.0 | 456.0 |
-| Workspace: volume free space used | ProjFS Workspace | 5 | 382.6 | 373.9 | 383.8 |
-| copy: volume free space used by the build | full directory copy | 5 | 376.4 | 376.0 | 378.4 |
-| bytes the Commit read | ProjFS Workspace | 5 | 371.3 | 371.3 | 371.3 |
-| provider peak working set | ProjFS Workspace | 5 | 40.9 | 40.5 | 41.7 |
+| Workspace: content bytes on disk | ProjFS Workspace | 5 | 518.0 | 518.0 | 518.0 |
+| Workspace: volume free space used | ProjFS Workspace | 5 | 408.8 | 398.5 | 408.9 |
+| copy: volume free space used by the build | full directory copy | 5 | 398.3 | 392.7 | 401.7 |
+| bytes the Commit read | ProjFS Workspace | 5 | 516.6 | 516.6 | 516.6 |
+| provider peak working set | ProjFS Workspace | 5 | 43.6 | 43.1 | 44.2 |
 <!-- end:build-disk -->
 
 <!-- begin:build-count -->
 | after the build | setup | n | median | min | max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| paths the Commit applied | ProjFS Workspace | 5 | 1,408 | 1,408 | 1,408 |
-| full files on disk | ProjFS Workspace | 5 | 1,326 | 1,326 | 1,326 |
-| provider CPU time (ms) | ProjFS Workspace | 5 | 6,609 | 6,359 | 6,656 |
+| paths the Commit applied | ProjFS Workspace | 5 | 1,704 | 1,704 | 1,704 |
+| full files on disk | ProjFS Workspace | 5 | 1,621 | 1,621 | 1,621 |
+| provider CPU time (ms) | ProjFS Workspace | 5 | 10,266 | 10,016 | 11,719 |
 <!-- end:build-count -->
 
-A full build in a ProjFS Workspace took 12,063 ms, against 11,451 ms in a
-copy and 11,356 ms in a worktree: 5 to 6% more, with a wider spread. The
-incremental build took 2,919 ms against 2,338 ms and 2,459 ms: about a fifth
-to a quarter more. Build outputs are new files, written straight to NTFS;
-what the provider adds is the hydration of the sources.
+A full build in a ProjFS Workspace took 11,232 ms, against 10,913 ms in a
+copy and 11,013 ms in a worktree: 2 to 3% more, with a wider spread. The
+incremental build took 2,355 ms against 1,928 ms and 1,860 ms: about a
+quarter more. Build outputs are new files, written straight to NTFS; what
+the provider adds is the hydration of the sources.
 
 The Commit after the build is the expensive line. LayerFS captures the whole
 Workspace, `target` included, so the Commit reads every build output:
-371.3 MiB in 1,408 paths, in about 8.6 s. In the first run the same Commit
-read 593.0 MiB (that run's `raw.csv`), because some files were compared
-twice; each item is now compared once. The files on disk hold more bytes
-than the Commit read. The likely reason is that cargo hard-links some
-outputs: the count on disk adds every name, and the Commit stores a linked
-file once. This was not verified.
+516.6 MiB in 1,704 paths, in about 12 s. That is every byte on disk
+(518.0 MiB), where the run before the second review read 0.81 of them.
+cargo hard-links some of its outputs, and a file the journal marks is now
+compared at every name it has (3.1), so a linked file is read once per
+name. One comparison per file would do when the view holds the names as one
+file; that saving was not built.
+
+Two cautions for this section. The build was made by cargo 1.96.0, whose
+`target` directory is larger than 1.85.1's (1,621 full files against 1,326
+in the earlier runs), so these numbers do not compare with earlier runs'.
+And the other session's tests ran during all of it.
 
 ### 7.7 What this says for #454
 
@@ -1290,15 +1526,16 @@ Only what the tables above support:
 
 - Creating a Workspace is tens of milliseconds at either size, where a copy
   or a worktree of the medium fixture takes tens of seconds. The cost comes
-  at first use instead: about 14 s for the first full listing of the medium
-  tree and about 27 s for the first search of it (7.2), and Project Init of
-  that tree took 78 s once (7.1).
+  at first use instead: about 13 s for the first full listing of the medium
+  tree and about 22 s for the first search of it (7.2), and Project Init of
+  that tree took 94 s once (7.1).
 - After that the provider is no longer involved in reading a file, and a
-  full search is level with a copy (small fixture) or about a quarter slower
-  (medium).
+  full search is a fifth (small fixture) to a quarter (medium) slower than
+  in a copy.
 - The cost of a Commit and of a status follows what changed, also after the
   tree was listed and searched (7.4). What the tools did themselves counts
-  as a change: Git's index, a build's outputs.
+  as a change: Git's index, a build's outputs. A file some process keeps
+  open is compared at every Commit (3.1); no case here has one.
 - Disk follows what was read or written, with the 64 KiB units per hydrated
   file above. On the medium fixture a Workspace that was only listed and
   `git status`-ed is several times smaller than a copy; one that was searched
@@ -1311,28 +1548,50 @@ Neither was run.
 ### 7.8 Failed rows, discarded runs and a bug the benchmark found
 
 <!-- begin:failed -->
-Rows in `raw.csv` of both runs: 2,167, of which FAILED: 0.
+Rows in `raw.csv`: 1,767, of which FAILED: 0.
 <!-- end:failed -->
 
-**Runs that are not reported, after the review.** Two smoke runs of the
-changed Commit cases, one sample each on the small and the medium fixture,
-checked the script; their output was not kept. One run from a clean clone
-measured nothing at all: `powershell -File run.ps1 -Cases commits,builds`
-hands the list over as one string, which matched no case. The script now
-splits the list and refuses an unknown one (`5819f0b2b`). The run after
-that was stopped partway through the small fixture, with no row failed,
-because reading the code meanwhile had found that directory names were
-compared in a way that grows with the square of a directory's size; that
-was replaced (`cb3b53b90`) and the partial output was not kept.
+**Complete runs that are kept and not reported.** Each is of code that
+changed afterwards. All have 0 FAILED rows.
 
-One complete run is kept and not reported: `bench/results/20261119T234349Z/`,
-of `cb3b53b90`, 820 rows, none failed. Its Commit of 1,000 files on the
-medium fixture was slower than the first run's (1,967 ms median against
-1,202 ms). Part of that was real: that code looked every committed file up
-in the new base, which read the base's directories at each Commit. That was
-removed (`61aa3a4e5`). The rest was the Store, which had grown. Because the
-code changed after it, the run reported here is the one after it, of the
-final code.
+| Run | Code | Cases | Why it is not the reported one |
+| --- | --- | --- | --- |
+| `20261118T001312Z` | `bbf880c68`, before the first review | all | The first version's run. Its Commit cases ran only on a fresh mount |
+| `20261119T234349Z` | `cb3b53b90` | Commit, build | That code read the new base's directories at each Commit; removed in `61aa3a4e5` |
+| `20261120T003617Z` | `61aa3a4e5`, after the first review | Commit, build | The second review's fixes changed the tracker and the capture |
+| `20261120T015342Z` | `5c2d1a0ee`, after the second review | all | The fault of 13.3 was found and fixed after it. Built with rustc 1.96.0, like the reported run |
+
+**How far two runs differ.** The last of these and the reported run are
+both complete, were made hours apart on fresh fixtures, with the same
+compiler, and differ by one commit in the tracker. Over the 141 cases with
+a time in both, the reported run's median is on average (geometric mean)
+1.05 times the earlier one's for the ProjFS Workspace, 1.05 for the copy,
+1.02 for the worktree and 1.00 for the plain directory. Single cases go
+much further, for every setup: creating a worktree of the medium fixture
+took 25.8 s in the earlier run and 16.5 s in this one; copying the small
+fixture 1.5 s and 2.1 s; Project Init of the medium fixture 142 s and 94 s;
+the first `git status` in a Workspace 1.2 s and 2.5 s, for the reason given
+in 7.2. So a difference between two setups in one run that is under a
+factor of about 1.5 is within what the same setup showed between two runs.
+
+**Runs that were stopped or measured nothing, after the first review.** Two
+smoke runs of the changed Commit cases checked the script; their output was
+not kept. One run from a clean clone measured nothing at all:
+`powershell -File run.ps1 -Cases commits,builds` hands the list over as one
+string, which matched no case. The script now splits the list and refuses
+an unknown one (`5819f0b2b`). The run after that was stopped partway
+through the small fixture, with no row failed, because reading the code
+meanwhile had found that directory names were compared in a way that grows
+with the square of a directory's size; that was replaced (`cb3b53b90`) and
+the partial output was not kept.
+
+**After the second review.** One smoke run of the Commit cases on the
+medium fixture, one sample each, checked that reading files is not taken
+for a change after the fix of 13.3; its output was not kept. A run on
+rustc 1.85.1 was started and stopped within two minutes, when the other
+session's tests were seen running; its partial output was not kept. A script then waited for the machine to be quiet
+before starting another, and was stopped before it started anything, when
+the final review round arrived.
 
 **Discarded runs before that.** Three earlier runs of `run.ps1` were stopped
 before they finished and are not reported. Their partial output was not kept. None was
@@ -1374,6 +1633,9 @@ every run reported here.
   has to be learned afterwards from NTFS.
 - ProjFS's own notifications are not enough for that: a write through an
   open handle is reported only at the close, an attribute change never.
+- Its on-disk state is not enough either: a written file still reads as a
+  placeholder until ProjFS has unmarked it, which waits for every other
+  handle on the file.
 - A store through a mapped view of an ordinary file leaves no trace anywhere
   until the file is closed.
 - While the provider is down the directory is partly usable and partly not,
@@ -1394,18 +1656,38 @@ every run reported here.
 - *It needs the volume's change journal*, and reads all of it: the journal
   is one per volume, so its records of every other directory are read and
   dropped. On a volume without a journal, mount is refused.
+- *A changed item that may not be opened stops every Commit* until it can
+  be opened or is gone. That is the safe answer and not a convenient one: a
+  file whose access list locks its owner out blocks the whole Workspace.
 - *A restart cannot merge.* The engine binds a Workspace only at a Branch's
   present head. When the Branch moved while no provider served the
   directory, the directory keeps showing the recorded base, `status` says
   so, and Commit is refused. Nothing is undone, and nothing can be
   committed: the Workspace can only be read and discarded. A product needs a
   bind at a recorded Commit.
-- *A conflicted merge of more than 4,096 changed paths* is not handled, by
-  the review's reading of the code: the engine truncates its list of changed
-  paths, this crate does not read the flag, and Conflict files beyond the
-  cap get no marker file (finding 8). Not reproduced, not fixed.
-- *Full files stay full* after their Commit (4.2), unless a merge replaces
-  them.
+- *Its own Commit can look like a moved Branch.* The base record is written
+  right after the engine answers, before the directory is touched. A
+  provider that stops between the engine's publication and that write
+  leaves a record of the old head beside a Branch at the new one, which the
+  next `resume` cannot tell from another Workspace's Commit: Commit is
+  refused as above. The engine's Commit call names the new Commit only when
+  it returns, so the record cannot be written earlier. Comparing the
+  directory with the new head at resume would tell the two apart, and is
+  not built.
+- *The step after a merge is not atomic with the Commit.* A file changed
+  between the Commit's read and the step is kept and overwrites the merged
+  version at the next Commit (4.5). A rewritten file is truncated and
+  written in place, so a reader in that moment can see part of it.
+- *A file that cannot be rewritten after a merge shows old bytes* until its
+  holder lets go (4.5). It is listed, not locked: an edit of it is
+  committed over the Branch's version.
+- *When everything is compared, a renamed placeholder is told by size and
+  time only* (4.2).
+- *A file some process keeps open is read at every Commit* once it was read
+  or written through that handle, until the handle closes (3.1). For a
+  large file held open for hours that is a large cost per Commit.
+- *Full files stay full* after their Commit (4.2). A merge rewrites one in
+  place and leaves it full.
 - *The extra copy at Commit.* Changed bytes go NTFS to overlay to Store.
 - *Metadata.* Mode is the read-only bit, as #452's Init stores it; directory
   times and creation and access times are not kept. A change of only the
@@ -1439,43 +1721,66 @@ for this checkout (`rustup override set 1.85.1`). Everything below ran on it.
 in the tests' support code (`tests/support/ops.rs`), which newer Clippy had
 not. It was rewritten. Nothing in the crate needed a newer compiler.
 
-**Windows, after the review's fixes** (Windows 11 Home 10.0.26200), in a
-fresh clone at `61aa3a4e5`; the log is `results/clean-checkout-2.txt`:
+**Windows, the final code** (Windows 11 Home 10.0.26200), in a fresh clone
+at `79c119784`, the last commit that changes code or tests; the log is
+`results/clean-checkout-3.txt`:
 
 | Check | Result |
 | --- | --- |
-| `cargo test --locked -p layerfs-projfs` | 62 passed, 0 failed, 0 ignored |
+| `cargo test --locked -p layerfs-projfs` | 95 passed, 0 failed, 0 ignored |
 | `cargo clippy --locked -p layerfs-projfs --all-targets -- -D warnings` | no finding |
 | `cargo fmt -p layerfs-projfs -- --check` | clean |
-| `python tools/check_product_boundary.py --skip-sdk` | PASS, 859 production files scanned |
-| `bench/run.ps1 -Cases commits,builds` | finished, 820 rows, 0 FAILED (sections 7.4, 7.6, 7.8) |
+| `python tools/check_product_boundary.py --skip-sdk` | PASS, 861 production files scanned |
+| `bench/run.ps1` | not at this commit. The run of section 7 is of `d78023836`, from a fresh clone: 1,767 rows, 0 FAILED |
+| `bench/compare-commit.ps1` | the last code commit's binary against the one before the reviews (7.4) |
 
-Two tests failed on the way to that run, both tests and not the provider:
+Tests that failed on the way, and what each turned out to be:
 
-- The clean-checkout run one commit earlier (`cb3b53b90`) failed in
-  `tests/allocation.rs`, and cargo stopped there. The test looked at a file
-  a moment before ProjFS had finished turning it into a full file. It now
-  waits, bounded, for the settled state, and passed sixty runs in a row.
-- In one run of the whole suite the `live` assertion of the held-open test
-  in `tests/m2_processes.rs` failed. It did not fail again in over forty
-  runs, and its cause was not established. The test now keeps its files open
-  longer and checks that both writers still hold them before it asserts, so
-  a slow machine can be told from a wrong result.
+- After the second review's fixes, the whole suite was run five times in
+  the working checkout. One run had two failures whose names were not
+  kept; one of the next four had one, `hard_links` in `tests/m2_names.rs`:
+  a Commit right after a write answered "nothing changed". This was the
+  provider, not the test. The journal records of the directory the test
+  left showed it (`results/usn-probe.txt`, section 4), a deterministic test
+  was then made, and the fault is fixed (13.3). After the fix the suite
+  passed three runs in a row there and once in the fresh clone. That is
+  four runs, not proof that no other rare failure is left.
+- After the third review's fix, the suite failed once in a fresh clone, in
+  `git_status_and_checkout_inside_the_workspace`: the Workspace's status
+  was not empty after `git status` on a fresh mount. Here the provider was
+  right and the test wrong. Git had rewritten its own index, which it does
+  when it cannot trust file times (`results/usn-probe.txt`, section 6). The
+  test now tells Git not to (`--no-optional-locks`); its assertion is
+  unchanged. The suite then passed in a fresh clone, which is the run in
+  the table.
+- During that work, tests in the working checkout ran old code for a
+  while: another checkout of this repository inside `target/` had built
+  into the same target directory, and cargo took its outputs for this
+  checkout's. Nothing reported here comes from those runs; every result
+  above is from a clone with a target directory of its own.
+- Before the first review's fixes were final, `tests/allocation.rs` looked
+  at a file a moment before ProjFS had finished turning it into a full
+  file. It waits, bounded, for the settled state.
+- In one run of the whole suite at that time, the `live` assertion of the
+  held-open test in `tests/m2_processes.rs` failed. Its cause was not
+  established then. The fault in 13.3 can produce it (a file whose first
+  write was not seen is not found held open), but that was not shown.
 
 `--skip-sdk` leaves the Node binding and the JavaScript packages out of the
 guard's scan, as the repository's CI does. `cargo fmt --all` cannot be run on
 Windows ("The filename or extension is too long", the command-line limit)
 and was run on Linux instead.
 
-The review's repro tests were cherry-picked from `f77786649` and are
-unchanged except that `cargo fmt` rewrapped some of their lines: with
-whitespace and trailing commas removed, the old and the new file are
-identical. No assertion was touched.
+The reviews' repro tests were cherry-picked from `f77786649`, `0c5b4e4d7`
+and `3fd013e53` and are unchanged except that `cargo fmt` rewrapped some of
+their lines: with whitespace and trailing commas removed, each old and new
+file are identical. No assertion was touched.
 
-**Windows, before the review** (the first run): a fresh clone at `bbf880c68`
-passed its 41 tests, Clippy and the guard, then ran the whole benchmark; the
-log is `results/clean-checkout.txt`. `tests/allocation.rs` was added after
-it (44 passed at `5b21a183f`).
+**Windows, earlier states.** Before the first review, a fresh clone at
+`bbf880c68` passed its 41 tests, Clippy and the guard, then ran the whole
+benchmark (`results/clean-checkout.txt`). After the first review's fixes, a
+fresh clone at `61aa3a4e5` passed 62 tests and ran the Commit and build
+cases (`results/clean-checkout-2.txt`).
 
 **Linux, before and after** (WSL2 Ubuntu, kernel 6.6.87.1). `bench/linux-check.sh`
 clones the repository into a Linux file system and runs the same steps on the
@@ -1499,19 +1804,19 @@ test, and its Clippy is clean.
 
 **Linux, the final code.** Everything since `9a4fee4ca` changed only this
 crate and, in `tools/check_product_boundary.py`, the line that lists the
-crate's audited unsafe modules. So the last commit that touches anything but
-this report, `61aa3a4e5`, was checked again on Linux for what could differ: the
+crate's audited unsafe modules. So the last commit that changes code or
+tests, `79c119784`, was checked again on Linux for what could differ: the
 guard and its self-tests, formatting of the whole workspace, and the crate
 (`results/linux-head-check.txt`):
 
 ```text
-    head 61aa3a4e5; toolchain: cargo 1.85.1 (d73d2caf9 2024-12-31) / rustc 1.85.1 (4eb161250 2025-03-15) / Linux 6.6.87.1-microsoft-standard-WSL2
+    head 79c119784; toolchain: cargo 1.85.1 (d73d2caf9 2024-12-31) / rustc 1.85.1 (4eb161250 2025-03-15) / Linux 6.6.87.1-microsoft-standard-WSL2
     files outside engine/crates/layerfs-projfs changed since 9a4fee4ca: [tools/check_product_boundary.py ]
     fmt exit=0
-    guard exit=0       1 PASS: scanned 996 production Rust/SQL/JavaScript files; semantic review still required;
+    guard exit=0       1 PASS: scanned 998 production Rust/SQL/JavaScript files; semantic review still required;
     guard-tests exit=0       1 OK;      1 Ran 157 tests ;
     build-projfs exit=0       1     Finished `dev` profile [unoptimized + debuginfo] target(s) ;
-    test-projfs exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) ;     14 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0
+    test-projfs exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) ;     17 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0
     clippy-projfs exit=0       1     Finished `dev` profile [unoptimized + debuginfo] target(s) ;
     done
     exit=0
@@ -1542,7 +1847,9 @@ Against this branch's base (#452 merged with `main`), two files:
 | `Cargo.lock` | The new package's entry | A `--locked` build needs it |
 
 No existing crate's source or manifest changes. The second unsafe module
-came with the review fixes: the first version had one.
+came with the first review's fixes: the first version had one. The second
+round added three calls to it (every name of a hard-linked file, and one
+journal record by its number) and no third module.
 
 ### The `windows-prototype` feature: nothing of it remains
 
@@ -1581,23 +1888,23 @@ is clear:
 ## 11. Source layout
 
 Scope: the new crate's production source, `engine/crates/layerfs-projfs/src`,
-at commit `61aa3a4e5`. The numbers are the production lines (`prod`) of
+at commit `ff02d795f`. The numbers are the production lines (`prod`) of
 `tools/production_loc.py --files`. Every file is new against the base. The
 listing shows the tree as it is, so no line carries a change marker.
 
 ```diff
-  src/                                  [5236]
+  src/                                  [6299]
     lib.rs                                 14   (declarations only)
-    ntfs.rs                               271   (audited unsafe: the NTFS change journal, a file by its identity)
-    projection.rs                         383   (mount, resume, status, unmount, discard of a projected directory)
+    ntfs.rs                               400   (audited unsafe: the NTFS change journal, a file by its identity and its names)
+    projection.rs                         412   (mount, resume, status, unmount, discard of a projected directory)
     sys.rs                                683   (audited unsafe: the ProjFS API and callbacks)
     bin/                                [10]
       layerfs-projfs.rs                    10   (the command line's entry)
-    cli/                                [565]
+    cli/                                [581]
       commands.rs                         223   (argument parsing; init, fork, head, mount, resume, spike)
       json.rs                              59   (one line of JSON per answer)
       mod.rs                                4
-      server.rs                           279   (the loopback control channel of a serving mount)
+      server.rs                           295   (the loopback control channel of a serving mount)
     provider/                           [410]
       mod.rs                                4
       serve.rs                            239   (the callbacks: enumerate, placeholder, file data, rename and link)
@@ -1613,31 +1920,35 @@ listing shows the tree as it is, so no line carries a change marker.
       keys.rs                               2   (the fixed catalog binding and cursor key)
       mod.rs                                6
       project.rs                           64   (Project Init, then owner-only access)
-    track/                              [1017]
+    track/                              [1172]
       journal.rs                          143   (the renames and links ProjFS reported)
       local.rs                            140   (reads the local layer)
       mod.rs                                7
-      status.rs                           413   (compares changed items with the base)
-      watch.rs                            314   (which items changed, from the change journal)
-    workspace/                          [1327]
-      capture.rs                          516   (makes the engine view equal the disk)
-      commit.rs                           395   (Commit, the baseline update, conflict markers)
-      ledger.rs                           108   (what each full file was last committed as)
-      mod.rs                                8
-      mount.rs                            260   (mount, resume, status, unmount, discard)
-      record.rs                            40   (the mount's state file)
+      status.rs                           458   (compares changed items with the base)
+      watch.rs                            424   (which items changed, from the change journal)
+    workspace/                          [2061]
+      capture.rs                          585   (makes the engine view equal the disk)
+      commit.rs                           382   (Commit: capture, the engine's Commit, the records)
+      follow.rs                           520   (after a merge: brings the disk to the installed tree)
+      ledger.rs                            90   (what each full file was last committed as)
+      mod.rs                               11
+      mount.rs                            342   (mount, resume, status, unmount, discard)
+      record.rs                            46   (the mount's state file)
+      unfollowed.rs                        85   (the paths a merge could not bring over)
 ```
 
-The review's fixes added `ntfs.rs`, `track/watch.rs` and
-`workspace/ledger.rs` and took the crate from 4,109 production lines to
-5,236.
+The crate grew with each round: 4,109 production lines before the first
+review, 5,236 after its fixes (`ntfs.rs`, `track/watch.rs`,
+`workspace/ledger.rs`), 5,969 after the second's and the two faults found
+after it (`workspace/follow.rs`, and more in the journal reader and the
+capture), 6,299 now (`workspace/unfollowed.rs`).
 
-Tests are outside `src/` and are not counted: `tests/` holds eleven test files
-and `tests/support/`. The benchmark scripts are in `bench/`, the kept records
-in `results/` and `bench/results/`.
+Tests are outside `src/` and are not counted: `tests/` holds fourteen test
+files and `tests/support/`. The benchmark scripts are in `bench/`, the kept
+records in `results/` and `bench/results/`.
 
 The counter sorts crates into scopes by a list of names that does not yet
-know this crate, so it reports these 5,236 lines under its "core" scope
+know this crate, so it reports these 6,299 lines under its "core" scope
 instead of "engine". The combined total is not affected. The tool was left as
 it is: changing it is an edit outside the crate that nothing requires.
 
@@ -1649,7 +1960,7 @@ what ProjFS did here and from WinFsp's documentation.
 | Topic | ProjFS (measured or observed here) | WinFsp (reasoned, not measured) |
 | --- | --- | --- |
 | Where writes go | NTFS. The provider is told afterwards. | Through the file system process. It could feed the existing SQLite overlay directly. |
-| Change capture | The NTFS change journal read without administrator rights, a record of committed files, ProjFS's rename reports as hints, and a copy into the overlay at Commit. A mapped-view store is missed until the file closes. | Likely none of these: the overlay would be the live state, as with FUSE. The existing Capture and Commit would apply as they are. |
+| Change capture | The NTFS change journal read without administrator rights, a record of committed files, ProjFS's rename reports as hints, a comparison of contents wherever the journal cannot rule a change out, and a copy into the overlay at Commit. A mapped-view store is missed until the file closes. A file kept open is read at every Commit. | Likely none of these: the overlay would be the live state, as with FUSE. The existing Capture and Commit would apply as they are. |
 | Point-in-time Commit | Not possible across files. | Likely possible: the file system serializes its own writes, as the FUSE mount does. |
 | Speed of an unchanged, already-read file | The provider is not involved. A second full search was level with a copy on the small fixture and about a quarter slower on the medium one (7.2). | Every read and stat crosses into user mode. Likely slower for build and search. |
 | First access | One callback per directory and per file. | Similar. |
@@ -1660,45 +1971,113 @@ what ProjFS did here and from WinFsp's documentation.
 | Disk | Only what was read or written, plus full files kept after Commit. Each file read holds whole units of 64 KiB while it is a placeholder (7.5). | Only the overlay. No hydrated copies. |
 | Installation | A Windows optional feature, enabled by an administrator. No third-party driver. | A third-party signed driver to install and keep updated. |
 | Tool compatibility | Git, ripgrep, cargo and a watcher worked unmodified. Tombstones leak into watcher events. | Depends on how much NTFS behavior the implementation covers. |
-| Engine reuse | Mount, change tracking, capture and baseline code are new (this crate, 5,236 production lines). | The FUSE adapter's shape would likely carry over; Windows open, delete and cache rules would be the new work. |
+| Engine reuse | Mount, change tracking, capture and baseline code are new (this crate, 6,299 production lines, and three rounds of review to get change tracking right). | The FUSE adapter's shape would likely carry over; Windows open, delete and cache rules would be the new work. |
 
 The short version of the trade: ProjFS gives near-NTFS speed for files
 already on disk and survival of a dead provider, and pays for it with a
-second write layer that has to be reconciled. WinFsp would likely keep one
+second write layer that has to be reconciled. Section 13 is what that
+reconciling cost here: most of the faults the reviews found, and the two
+found after them, are places where NTFS or ProjFS changed something
+without saying so in the way the code expected. WinFsp would likely keep one
 write layer and the existing Commit, and pay per operation. Which matters
 more is what section 7 is for.
 
-## 13. The review's findings and their status
+## 13. The reviews' findings and their status
 
-An independent review of this branch reproduced six findings with tests
-(`tests/review_repro.rs`, cherry-picked unchanged except for formatting) and
-raised six more from reading. All twelve are listed. "Fixed" means the code
-changed; the test column says whether a test shows it.
+Three independent reviews of this branch. The first reproduced six findings
+with tests (`tests/review_repro.rs`) and raised six more from reading. The
+second, of the code after the first round's fixes, reproduced eight failures
+with tests (`tests/review_repro2.rs`) under five findings and pointed at one
+line of `src/ntfs.rs`. The third, of the code after the second round and the
+two faults of 13.3, wrote three tests (`tests/review_repro3.rs`), one of
+which failed, and raised one more point from reading. All three test files
+were cherry-picked unchanged except for formatting. Every finding is listed.
+"Fixed" means the code changed; the test column says whether a test shows
+it.
+
+### 13.1 The first review
 
 | # | Finding | Status | What changed, and what is left | Test |
 | --- | --- | --- | --- | --- |
 | 1 | Blocker. A write through a file handle that is still open was not committed: the change index was built from ProjFS close notifications. | **Fixed** | Changes are read from the NTFS change journal, which records the first write. A file not yet shown closed is compared at every Commit. **Left:** a store through a mapped view of an already full file is not seen until the file closes. | `r1`; `tracking`: two writes through one handle; the mapped view |
-| 2 | Blocker. A file this Workspace committed never followed the Branch, and a restart with nothing uncommitted reverted other Workspaces' Commits. | **Fixed, with a limit** | A record of what each full file was last committed as. A merge replaces a committed file that is unchanged; a tombstone is cleared once its deletion is committed; the restart reads the change journal instead of treating every full file and tombstone as a change. **Limit:** when the Branch moved during the downtime, Commit is refused, not merged. | `r3a`, `r3b`; `tracking`: a deleted name that comes back; the restart after the Branch moved |
-| 3 | Blocker. Changes inside a directory were lost if the directory was renamed before the Commit. | **Fixed** | Changed items are found by identity at their present path, and a directory whose names changed is compared name by name with the view. | `r2` |
+| 2 | Blocker. A file this Workspace committed never followed the Branch, and a restart with nothing uncommitted reverted other Workspaces' Commits. | **Fixed, with a limit** | A merge brings every item on disk to the installed tree (4.5; reworked after the second review, 13.2 finding 2); a tombstone is cleared once its deletion is committed; the restart reads the change journal instead of treating every full file and tombstone as a change. **Limit:** when the Branch moved during the downtime, Commit is refused, not merged. | `r3a`, `r3b`; `tracking`: a deleted name that comes back; the restart after the Branch moved |
+| 3 | Blocker. Changes inside a directory were lost if the directory was renamed before the Commit. | **Fixed** | Changed items are found by identity at their present path, and a directory whose names changed is compared name by name with the view. The fix was incomplete for a directory that arrives at a name the Store already holds: 13.2, finding 1. | `r2` |
 | 4 | Major. A junction inside the Workspace made every Commit fail, naming no path. | **Fixed** | A junction or symbolic link is never followed and never stored. It is named in `status` and in the Commit's answer, and the Commit goes on. A file symbolic link takes the same path in the code and was not run (creating one needs a privilege). | `r5`; `tracking`: a junction, also inside a new directory |
 | 5 | Major. Status and Commit walked every directory on disk, and the benchmark measured Commit only where that was free. The report said "neither walks the tree". | **Fixed** | The sweep is gone: an attribute change is a journal record. Commit and status are measured after the tree was listed, `git status` run and every file searched (7.4). The sentence is removed; 3.1 says what is listed and when. | `r6` (prints); section 7.4 |
 | 6 | Major. `resume` accepted another Workspace's state directory, and `discard` then deleted the wrong directory. | **Fixed** | The state directory records its directory's identity on the volume. `resume` and `discard` refuse another directory. | `r8` |
 | 7 | Major, suspected. Commit could report `Failed` after it had published. | **Fixed, not tested** | A published Commit is returned as published; what failed afterwards is a warning beside it that says what to do. No test makes the later steps fail: product source may not carry fault injection. | none |
-| 8 | Major, suspected. A conflicted merge of more than 4,096 changed paths can lose the Conflict. | **Open** | Not changed. | none |
-| 9 | Major, suspected. A race in the baseline update: on-disk placeholders were updated before the served tree was swapped. | **Fixed, race not reproduced** | The new tree is served first; on-disk items are then brought over against the old one. | `r7` passes; no test hits the window |
+| 8 | Major, suspected. A conflicted merge of more than 4,096 changed paths can lose the Conflict. | **Fixed** | The directory no longer follows the engine's capped list of changed paths. It is brought to the installed tree by comparing the two trees at the items on disk (4.5), so a conflicted file past the cap gets its marker block. | `arrivals`: a Conflict among 4,201 changed paths, where the engine's list ends before the conflicted file |
+| 9 | Major, suspected. A race in the baseline update: on-disk placeholders were updated before the served tree was swapped. | **Fixed, race not reproduced** | The new tree is served first; on-disk items are then brought over against the tree the directory showed. | `r7` passes; no test hits the window |
 | 10 | Minor, suspected. A file removed by another process during a capture failed the whole Commit. | **Fixed, not tested** | The capture goes on; the change journal has the deletion for the next one. | none |
 | 11 | Minor. `src/sys.rs` and related points. | **Partly fixed** | Fixed: the local-only switch is a count; mapping a path through a rename no longer cuts one string by another's length. Open: a name that is not valid UTF-16 is skipped without a word; the aligned buffer leaks if a read handler panics; freeing the handler assumes `PrjStopVirtualizing` waits for running callbacks; an unreadable rename log is treated as empty (a move then becomes a deletion and an addition). | none |
 | 12 | Minor. The control channel and leftovers. | **Fixed** | The control secret is random bytes from the system. A client that connects and sends nothing is dropped after five seconds. A killed provider's overlay directory is removed by the next provider of the same Workspace, and the test that ended with `unmount` now discards. Two runs of the suite leave nothing in the temporary directory (counted). A real crash still leaves the Workspace directory until `resume` and `discard`. | counted by hand |
 
-The review's other notes:
+The first review's other notes:
 
 | Note | Status |
 | --- | --- |
 | "Edits commit and read back exactly" was proven only for the first Commit of a fresh mount | Later Commits are now covered by `r1`, `r2` and `tracking` |
-| "The directory follows a merge" was false for a committed file | True now for a file that was read, a file that was committed and a name that was deleted (4.5) |
+| "The directory follows a merge" was false for a committed file | True for the cases listed in 4.5, each with a test |
 | Held-open file: the `Busy` refusal for a change during the read is never run | Still not run by a test |
 | Provider killed: "nothing written is lost" was not proven, and the kill happens while idle | The Commit after the restart is now read back and compared. The kill is still made while idle |
 | "A directory created in the Workspace renames normally" was not proven for a committed directory | Proven by `r2` |
-| Only the ProjFS rows run an extra `usage` walk between steps, which warms the cache in ProjFS's favour | Unchanged: those cases were not run again |
+| Only the ProjFS rows run an extra `usage` walk between steps, which warms the cache in ProjFS's favour | Unchanged. The cases were run again for this report with the same script, so the bias is in the numbers of 7.2 |
 | Section 7.7 repeated "tens of milliseconds to create" without the first-use cost | Corrected |
 | The crate adds itself as an audited unsafe module, an owner decision; it keeps `bench/` and `results/` inside a product crate | Unchanged, and now two unsafe modules. For the owner to decide |
+
+### 13.2 The second review
+
+The second review's point, in one sentence: the code took "nothing says it
+changed" for "unchanged". The rule the fixes follow is the one it asked
+for: where the code is not sure whether something changed, it compares
+contents.
+
+| # | Finding | Status | What changed, and what is left | Test |
+| --- | --- | --- | --- | --- |
+| 1 | A directory that arrives at a name the Store already holds (renamed there inside the Workspace, or moved in from outside) kept the old directory's content in the Commit, with a clean status. | **Fixed** | A directory the journal shows created, renamed or moved in is compared whole with the view and with the base: every name, and every file below it by its bytes. The directories below one that arrives are registered when its record is read, so changes made right after are not passed over. | `s2`, `s3`; `arrivals`: a local directory over a local one, a directory removed and made again |
+| 2 | After a merge, only full files with an entry in the record of committed files were handled. A file captured in the merging Commit itself, a file below a renamed directory, and every file once the record was lost stayed stale on disk with a clean status; an edit of the stale file then undid the other Workspace's change. | **Fixed** | The directory is brought from the captured tree to the installed tree at every item on disk (4.5). The record of committed files gets the Commit's own files before the step and is only a shortcut: with no entry, the bytes are compared, and the comparison writes the entry. Merged content is written to the disk where it differs. **Left:** a file changed between the Commit's read and the step is kept, with a warning (section 1). | `s4`, `s5`, `s6`, `s7`; `arrivals`: five merge cases |
+| 3 | The list of files open for writing was in memory only. A write through a handle held across a provider restart was never committed. | **Fixed** | The list is written with the journal position it belongs to and read by the next provider. | `s1` |
+| 4 | A recorded journal position after the journal's end read as "no changes". | **Fixed** | A position has to lie between the journal's first record and its end, in the same journal. Otherwise everything on disk is compared, and for a position after the end or another journal the record of committed files is not asked. | `s8`; `s9` (a position before the first record) passed before and passes |
+| 5 | The base record was written after the baseline update. When the update failed or the provider stopped in it, the record still named the old head: the advice "unmount and resume" led to a Workspace that could never commit. | **Fixed, with a window left** | The record is written before anything on disk changes and names the step in progress; `resume` finishes it. A failed step refuses further Commits until then. **Left:** a provider that stops between the engine's publication and the write of the record (section 8). | `arrivals`: a merge the directory did not follow is finished at resume. No test stops a provider inside the step. |
+| | `src/ntfs.rs`: "access denied" on opening a changed item by its identity was treated as "gone". | **Fixed** | It is an error. Status and Commit are refused, naming the file's identity, and nothing is dropped: the change is committed once the file can be opened. | `tracking`: a changed file that may not be opened |
+
+`s10` (a store through a view kept after its handles closed) passed before
+the fixes and passes.
+
+Found while fixing, by asking where else the same assumption was made. Each
+was a real fault: run against the commit before the fixes, ten of the eleven
+cases of `tests/arrivals.rs` fail (the eleventh is finding 8 of the first
+review).
+
+| Case | Status |
+| --- | --- |
+| A projected file renamed over the name of a deleted projected file: the Commit kept the old file's bytes under the name. A placeholder was taken to hold the base's bytes for its path. | Fixed; tested for a file never read, one read before, without ProjFS's reports, and without the journal |
+| A hard link made over a deleted name was not looked at. | Fixed; tested |
+| A directory removed and made again under its name kept what the old one held, when the new one stayed empty. | Fixed; tested |
+| A name another Workspace added below a directory made here never appeared after the merge, and a later Commit from here then deleted it from the Branch. | Fixed; tested |
+| A directory another Workspace deleted stayed as an empty directory after the merge. | Fixed; tested |
+| With the journal lost, a renamed placeholder was compared only for its read-only bit. | Fixed for files that differ in size or time; open for the rest (section 1) |
+
+### 13.3 Found between the second and the third review
+
+Two more faults of the same kind, found by a test that failed once in
+several runs of the suite after the second round's fixes. Neither review
+had them. `results/usn-probe.txt`, sections 4 and 5, has the journal
+records that explain them.
+
+| Fault | Status | What changed | Test |
+| --- | --- | --- | --- |
+| A Commit begun right after a process wrote a projected file answered "nothing changed". The write is recorded while the file is still marked a placeholder, and every data record on a placeholder was taken for ProjFS writing the content in. With another process holding the file open for reading, the write stayed invisible to status and Commit for as long as it was held. | **Fixed** | A data record on a placeholder is a change unless it is the write-in of content, which begins under the recall attribute and never changes the length. | `tracking`: writes to projected files while a reader holds them (fails on the commit before the fix); a Commit begun right after a write, twenty times (does not fail before the fix: the interval is not hit on demand) |
+| While any handle on a file is open, a write can add no journal record. A second writer under a reader, and an overwrite in place of a projected file under a reader, were not committed until the reader closed. The second round's own fix had made a file stop being suspect when a Commit found no writer on it, which a reader does not prevent. | **Fixed, with one inference left** | A file with a data reason and no close in the journal stays suspect, and leaves the list, or enters the record of committed files, only when its newest journal record is a close. **Left:** the inference in section 1. | `tracking`: two writers under one reader (fails before the fix); the in-place overwrites in the test above |
+
+### 13.4 The third review
+
+Its verdict was that the branch is ready to show, on conditions. Two of its
+three tests passed as written: a second write under a reader after a
+provider restart is committed (`t1`), and a store through a mapped view is
+not replaced by a merge without the Commit naming the file (`t2`).
+
+| # | Finding | Status | What changed, and what is left | Test |
+| --- | --- | --- | --- | --- |
+| 1 | A committed file that the step after a merge could not rewrite, because a reader held it without sharing writes, was warned about once and then forgotten. The directory showed the old file with a clean status, and an edit of it removed the other Workspace's change from the Branch with no Conflict. | **Fixed, with a limit** | The path is kept in the state directory with the tree it shows and the tree it has to reach, tried again at every status and Commit, and named by status until it is brought over (4.5). A file nobody else may read is refused and listed too, where it used to be taken for a file changed since its Commit. **Limit:** while a file is behind, an edit of it is still committed over the Branch's version; status and the Commit's warning are all that say so. | `t3`; `arrivals`: listed while held, kept across a restart, brought over after |
+| 2 | The rule of 13.3 rests on an observation: after an application's write, the journal's close record no longer shows the placeholder mark. Nothing documents it. If a close record came with the mark still on, an overwrite in place during that session would be missed until the next record. | **Open** | Not changed. The check the review proposed (at such a close record, for a file ProjFS wrote in during that session, compare size and time with the base entry) needs one open per file ProjFS writes in. A search of the medium fixture writes in 51,194. The sequence was never observed, so no test could reach the check. Section 1 states the dependency. | none |

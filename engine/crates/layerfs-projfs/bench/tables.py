@@ -394,7 +394,7 @@ def sections(directory, commits=None, compare=None):
                     for metric in ("wall_ms", "status_after_ms"):
                         samples[(int(row["files"]), metric, row["build"])].append(float(row[metric]))
         labels = {"wall_ms": "Commit, {} changed", "status_after_ms": "status after the Commit of {}"}
-        builds = {"old": "before the review", "new": "after the review"}
+        builds = {"old": "before the reviews", "new": "the final code"}
         for (count, metric, build), values in sorted(samples.items(), key=lambda item: (item[0][0], item[0][1] != "wall_ms", item[0][2] != "old")):
             lines.append(f"| {labels[metric].format(files(count))} | {builds[build]} | {cells(values, milliseconds)} |")
         out["compare"] = chr(10).join(lines)

@@ -1,0 +1,30 @@
+﻿{
+    "run_id":  "20261120T015342Z",
+    "runs":  5,
+    "cases":  [
+                  "sessions",
+                  "commits",
+                  "disk",
+                  "builds"
+              ],
+    "heavy_runs":  1,
+    "commit":  "5c2d1a0ee339a63c70bd3cbd268ec41febb921a7",
+    "dirty":  false,
+    "binary_sha256":  "D42080E28BD3ED1457B505EE92BBD91071594D7DCDA2D218C6DA3A3D6D951EF6",
+    "rustc":  "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "os":  "Microsoft Windows 11 Home 10.0.26200",
+    "cpu":  "Intel(R) Core(TM) Ultra 9 275HX",
+    "cores":  24,
+    "logical_processors":  24,
+    "memory_bytes":  33690329088,
+    "disks":  [
+                  "NVMe MTFDKBA2T0QGN-1BN1AABGA SSD NVMe"
+              ],
+    "work_directory":  "%USERPROFILE%\\AppData\\Local\\Temp\\lfsb",
+    "work_filesystem":  "NTFS",
+    "defender_realtime":  true,
+    "defender_tamper":  true,
+    "git":  "git version 2.49.0.windows.1",
+    "ripgrep":  "ripgrep 14.1.1 (rev 4649aa9700)\r",
+    "wsl2_docker_layerfs":  "NOT_RUN - not set up on this machine; no number is borrowed"
+}
