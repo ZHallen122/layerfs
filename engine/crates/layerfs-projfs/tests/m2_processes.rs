@@ -451,8 +451,12 @@ fn git_status_and_checkout_inside_the_workspace() {
     let root = home.path().join("ws");
     let workspace = mount(&engine, &root);
     // A freshly mounted repository is clean, and asking is not a change.
+    // Git is told not to take its optional lock: without that, `git status`
+    // rewrites `.git/index` whenever it finds file times too close to the
+    // index's own to trust, which is a real change to the Workspace (the
+    // status then names `.git/index`, correctly) and depends on the clock.
     assert_eq!(
-        git(&root, &["status", "--porcelain"]),
+        git(&root, &["--no-optional-locks", "status", "--porcelain"]),
         (true, String::new())
     );
     assert_eq!(workspace.status().expect("status").changes, Vec::new());

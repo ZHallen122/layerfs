@@ -200,3 +200,35 @@ README.md id 0x5f0000001c125e state Ok(Some(8))
 #   the last handle closed, the journal held nothing that tells the overwritten file from one that
 #   was only read. The close record then shows the file without the reparse attribute.
 # - So a file with a data reason and no close has to stay suspect, whatever wrote the reason.
+
+## 6. `git status` rewriting its own index (2026-11-20)
+
+# `tests/m2_processes.rs` `git_status_and_checkout_inside_the_workspace` failed once in a run of the
+# whole suite from a fresh clone: after `git status` on a freshly mounted repository, the
+# Workspace's status was not empty. The records of the directory it left, for `.git/index` and,
+# for comparison, `.git/HEAD`, which Git only read:
+
+.git/index id 0x5e0000003461e0 state Ok(Some(8))
+   reason 0x00000100 attrs 0x20
+   reason 0x00000102 attrs 0x20
+   reason 0x80000102 attrs 0x20
+   reason 0x00001000 attrs 0x20
+   reason 0x00002000 attrs 0x20
+   reason 0x80002000 attrs 0x20
+.git/HEAD id 0x5f0000003461c7 state Ok(Some(3))
+   reason 0x00100102 attrs 0x400620
+   reason 0x80100102 attrs 0x400620
+   reason 0x00000001 attrs 0x400620
+   reason 0x80000001 attrs 0x400620
+   reason 0x00008000 attrs 0x620
+   reason 0x00108000 attrs 0x620
+   reason 0x80108000 attrs 0x620
+
+# What this shows:
+# - The file at `.git/index` is a new file that was created, written, closed and renamed to its
+#   name (0x1000, 0x2000): Git wrote `index.lock` and renamed it over the index. Its bytes differ
+#   from the committed index. So the status was right, and the test's premise was wrong: Git
+#   refreshes its index during `git status` when it cannot trust file times, which depends on the
+#   clock. The test now runs that `git status` with `--no-optional-locks`.
+# - ProjFS's write-in of content has a second shape here: overwrite and close while the recall
+#   attribute is still set, then the attribute change in a session of its own.
