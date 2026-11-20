@@ -44,6 +44,14 @@ fn wait_for(what: &str, mut ready: impl FnMut() -> bool) {
     }
 }
 
+/// How long each writer keeps its file open, in milliseconds: long enough
+/// that the Commit is made while both still hold theirs, also when the
+/// other tests of this file start processes at the same time. With 2,500
+/// the `live` assertion failed once in a run of the whole suite and never
+/// again in over forty runs; whether a writer had closed by then could not
+/// be told, which is what the check after the Commit is for.
+const HELD_FOR: u64 = 6000;
+
 #[test]
 fn a_file_held_open_by_another_process_during_commit() {
     let fixture = Fixture::new("m2-held-open");
@@ -55,23 +63,28 @@ fn a_file_held_open_by_another_process_during_commit() {
         &[Op::Hold(
             root.join("held-new.txt"),
             b"written while held".to_vec(),
-            2500,
+            HELD_FOR,
         )],
     );
     let (mut existing, _) = ops::spawn(
         fixture.home.path(),
-        &[Op::Hold(root.join("README.md"), b"HELD".to_vec(), 2500)],
+        &[Op::Hold(root.join("README.md"), b"HELD".to_vec(), HELD_FOR)],
     );
     wait_for("both writers wrote", || {
         std::fs::read(root.join("held-new.txt")).is_ok_and(|bytes| !bytes.is_empty())
             && std::fs::read(root.join("README.md")).is_ok_and(|bytes| bytes.starts_with(b"HELD"))
     });
     let committed = workspace.commit(None).expect("commit while held");
+    // The case is a Commit made while both files are held open. If a
+    // writer has closed by now the machine was too slow for the hold, and
+    // the assertions below would test something else.
+    let still_held = new_file.try_wait().expect("child").is_none()
+        && existing.try_wait().expect("child").is_none();
+    assert!(still_held, "a writer closed before the Commit; rerun");
     assert!(matches!(committed.outcome, Outcome::Committed { .. }));
     let mut live = committed.captured.live.clone();
     live.sort();
     assert_eq!(live, ["README.md", "held-new.txt"]);
-    assert!(new_file.try_wait().expect("child").is_none(), "still open");
     let (_, digests) = fixture.saved("work");
     assert_eq!(
         digests["held-new.txt"],

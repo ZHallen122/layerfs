@@ -104,6 +104,27 @@ fn state(path: &Path) -> i32 {
     sys::disk_state(path).expect("state").expect("on disk")
 }
 
+/// Waits, bounded, until the file at `path` is a full file that holds no
+/// more of the volume than `plain`. ProjFS finishes turning a file into a
+/// full file a moment after the call that caused it returns: looked at at
+/// once, the file can still read as a dirty placeholder (seen in about one
+/// run in forty of this test, and for most files in a tight loop).
+fn settles_full_and_compact(path: &Path, plain: &Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let (now, held, wanted) = (state(path), allocated(path), allocated(plain));
+        if now == sys::state::FULL && held == wanted {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{}: state {now}, {held} bytes of the volume against {wanted}",
+            path.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 struct Mounted {
     home: Scratch,
     source: std::path::PathBuf,
@@ -186,7 +207,7 @@ fn releasing_the_space_makes_the_file_a_full_file() {
 
     // The provider's own process clears the sparse flag through a handle
     // that can only write attributes. The request succeeds, the space is
-    // released, and the file is no longer a placeholder.
+    // released, and the file ends up no longer a placeholder.
     {
         let file = std::fs::OpenOptions::new()
             .access_mode(FILE_WRITE_ATTRIBUTES)
@@ -194,11 +215,7 @@ fn releasing_the_space_makes_the_file_a_full_file() {
             .expect("open for write-attributes");
         clear_sparse(&file).expect("clear the sparse flag");
     }
-    assert_eq!(
-        allocated(&small),
-        allocated(&mounted.source.join("small.txt"))
-    );
-    assert_eq!(state(&small), sys::state::FULL);
+    settles_full_and_compact(&small, &mounted.source.join("small.txt"));
 
     // Another process opening the file for writing, writing nothing, does
     // the same.
@@ -206,11 +223,7 @@ fn releasing_the_space_makes_the_file_a_full_file() {
         mounted.home.path(),
         &[Op::Hold(large.clone(), Vec::new(), 0)],
     );
-    assert_eq!(
-        allocated(&large),
-        allocated(&mounted.source.join("large.bin"))
-    );
-    assert_eq!(state(&large), sys::state::FULL);
+    settles_full_and_compact(&large, &mounted.source.join("large.bin"));
 
     // Neither file changed: both read as the base and status is empty.
     assert_eq!(
