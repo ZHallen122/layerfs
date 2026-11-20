@@ -171,7 +171,7 @@ cargo test -p layerfs-projfs
 ```
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File engine\crates\layerfs-projfs\bench\run.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\projfs-bench\run.ps1
 ```
 
 The command line, one line of JSON per command:
@@ -280,7 +280,7 @@ position of the last Commit (`src/track/watch.rs`, `src/ntfs.rs`):
   data record on a placeholder is a change unless it is the write-in of
   content. The first version of the journal reader took all of them for
   ProjFS's own, and a Commit begun in that interval answered "nothing
-  changed" (`results/usn-probe.txt`, section 4; tested with a reader
+  changed" (`tools/projfs-bench/records/usn-probe.txt`, section 4; tested with a reader
   holding the file).
 - *A reason is recorded once between two closes, and the close is the
   last handle's.* The first write to a file is a record. While any handle
@@ -738,7 +738,7 @@ After the third review (`tests/review_repro3.rs`, its own tests, and
 
 One automated test per case (`tests/m2_names.rs`, `tests/m2_processes.rs`,
 and one in `tests/m0_projection.rs`). Each asserts the behavior in the right
-column; the verdicts are recorded in `results/m2.tsv`.
+column; the verdicts are recorded in `tools/projfs-bench/records/m2.tsv`.
 
 | Case | Verdict | What happens, and what the user sees |
 | --- | --- | --- |
@@ -764,22 +764,31 @@ column; the verdicts are recorded in `results/m2.tsv`.
 One command produced every number in this section:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File engine\crates\layerfs-projfs\bench\run.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\projfs-bench\run.ps1
 ```
+
+When it was run, the script and the other benchmark files lay inside the
+crate, in `engine\crates\layerfs-projfs\bench\`, and the run's log and the
+other records name them there. They were moved to `tools/projfs-bench/`
+afterwards. The move changed three lines of `run.ps1`: its own path in the
+help text, and how it finds the repository's root. A short run of the moved
+script (the small fixture, the Commit cases, one sample) checked that it
+still starts, builds and writes its output; that output was not kept.
 
 It was run from a fresh clone of this branch at `59910e101` into an empty
 work directory, so the fixtures and their Stores were made by this run. It
 took two hours and forty-two minutes. Its output is kept as written in
-`bench/results/20261120T094524Z/`: `raw.csv` (one row per measurement),
+`tools/projfs-bench/results/20261120T094524Z/`: `raw.csv` (one row per measurement),
 `environment.json`, `fixtures.json`, and the script's own `summary.csv` and
-`summary.md`. The launcher's log is `results/benchmark-run-20261120T094524Z.txt`.
+`summary.md`. The launcher's log is `tools/projfs-bench/records/benchmark-run-20261120T094524Z.txt`.
 
 Three things about this run:
 
 - **It is of the final code.** `59910e101` holds the last commit that
   changes the crate's code (`ff02d795f`) and the last that changes a test
-  (`79c119784`). The only commit after it adds this run's output and this
-  report's text.
+  (`79c119784`). The commits after it add this run's output and this
+  report's text, and move the benchmark's files out of the crate. None
+  changes a file in `src/` or `tests/`.
 - **The compiler is the repository's.** The launcher set the toolchain and
   printed `rustc 1.85.1 (4eb161250 2025-03-15)` inside the clone before the
   build; the benchmark script asks again and writes the answer into
@@ -799,21 +808,21 @@ Three things about this run:
   What Windows does by itself (Defender, indexing, updates) was not
   controlled.
 
-Five earlier complete runs are kept beside it and not reported. 7.8 lists
-them, and uses the latest of them to show how far two runs on this machine
-differ.
+Five earlier complete runs are not reported. 7.8 lists them, says where
+their output is, and uses the latest of them to show how far two runs on
+this machine differ.
 
 How to read the tables:
 
 - Each line gives the number of samples `n`, then the median, the minimum and
   the maximum of the rows whose status is OK. No sample is dropped or chosen.
-- The tables are not typed. `bench/tables.py` computes them from `raw.csv`
+- The tables are not typed. `tools/projfs-bench/tables.py` computes them from `raw.csv`
   and the comparison's CSV files, and writes them between the marker
   comments of this file. This command fails when a table here differs from
   the raw data:
 
   ```powershell
-  python engine\crates\layerfs-projfs\bench\tables.py engine\crates\layerfs-projfs\bench\results\20261120T094524Z --compare engine\crates\layerfs-projfs\bench\results\compare --check engine\crates\layerfs-projfs\REPORT.md
+  python tools\projfs-bench\tables.py tools\projfs-bench\results\20261120T094524Z --compare tools\projfs-bench\results\compare --check engine\crates\layerfs-projfs\REPORT.md
   ```
 - Times are wall-clock milliseconds measured by the script around the whole
   command, process start included, unless a line says "inside the provider".
@@ -1169,12 +1178,12 @@ What the tables show:
 **Against the code before the reviews.** Two runs of `run.ps1` cannot be
 compared for these cases: the fixtures differ from run to run (7.8), and
 within one run every sample adds Branches and Commits to the Store.
-`bench/compare-commit.ps1` therefore takes two release binaries, the one of
+`tools/projfs-bench/compare-commit.ps1` therefore takes two release binaries, the one of
 `bbf880c68` (before the first review) and the one this run built and
 measured, both built with rustc 1.85.1, and alternates them on the same
 Commit of the medium fixture, on a fresh mount. It was run five minutes
 after the benchmark ended, on the Store that run had made, with no build
-or test running. Its output is in `bench/results/compare/`:
+or test running. Its output is in `tools/projfs-bench/results/compare/`:
 
 <!-- begin:compare -->
 | the same Commit by two builds (ms) | build | n | median | min | max |
@@ -1309,8 +1318,8 @@ rough cross-check, not as a measurement of one directory.
 
 **A hydrated file holds whole units of 64 KiB on the volume.** The free
 space rows after `rg` show it: far more space is gone than the content
-explains. `bench/allocation-check.ps1` (output in
-`results/allocation-check.txt`) asked NTFS for each file's extents on the
+explains. `tools/projfs-bench/allocation-check.ps1` (output in
+`tools/projfs-bench/records/allocation-check.txt`) asked NTFS for each file's extents on the
 small fixture. All 1,000 hydrated files hold exactly 16 clusters of 4,096
 bytes, where the same files in the plain tree hold 1 or 2: 65,536,000 bytes
 of the volume against 6,385,664. A larger file holds its size rounded up to
@@ -1328,7 +1337,7 @@ that clearing the flag would release the space. It is not that simple:
 - NTFS does hold it. The change journal's records carry the attributes
   below the ProjFS filter, and every record of a placeholder has both the
   sparse and the reparse-point attribute, before and after hydration
-  (`results/usn-probe.txt`). So the guess is right about NTFS and wrong
+  (`tools/projfs-bench/records/usn-probe.txt`). So the guess is right about NTFS and wrong
   about what any process can see or change: the filter hides both
   attributes, from the provider too.
 - The allocation still behaves like a sparse file's. A placeholder that has
@@ -1365,7 +1374,7 @@ unchanged copies. That is not built here.
 So the provider keeps hydrated files as placeholders, and the numbers of
 this section show the cost. The observations are asserted by
 `tests/allocation.rs`; the raw output of the probes is
-`results/allocation-probe.txt`.
+`tools/projfs-bench/records/allocation-probe.txt`.
 
 A listing alone puts directories on disk and no file content. After
 `git status` on the medium fixture 211 files have content, 44.1 MiB. Which
@@ -1553,8 +1562,12 @@ Neither was run.
 Rows in `raw.csv`: 1,767, of which FAILED: 0.
 <!-- end:failed -->
 
-**Complete runs that are kept and not reported.** Each is of code that
-changed afterwards. All have 0 FAILED rows.
+**Complete runs that are not reported.** Each is of code that changed
+afterwards. All have 0 FAILED rows. Their output is no longer in the
+branch's tree: it was taken out when the branch was cleaned up, and is in
+the branch's history, at commit `76e404913` under
+`engine/crates/layerfs-projfs/bench/results/`. The numbers of these runs
+quoted below and in 7.2 and 7.6 were computed from those files.
 
 | Run | Code | Cases | Why it is not the reported one |
 | --- | --- | --- | --- |
@@ -1731,7 +1744,8 @@ not. It was rewritten. Nothing in the crate needed a newer compiler.
 
 **Windows, the final code** (Windows 11 Home 10.0.26200), in a fresh clone
 at `79c119784`, the last commit that changes code or tests; the log is
-`results/clean-checkout-3.txt`:
+`tools/projfs-bench/records/clean-checkout-3.txt`. The benchmark's files
+still lay in the crate then (section 7):
 
 | Check | Result |
 | --- | --- |
@@ -1739,8 +1753,8 @@ at `79c119784`, the last commit that changes code or tests; the log is
 | `cargo clippy --locked -p layerfs-projfs --all-targets -- -D warnings` | no finding |
 | `cargo fmt -p layerfs-projfs -- --check` | clean |
 | `python tools/check_product_boundary.py --skip-sdk` | PASS, 861 production files scanned |
-| `bench/run.ps1` | the run of section 7, in a fresh clone at `59910e101`, which holds the same code and tests: 1,767 rows, 0 FAILED |
-| `bench/compare-commit.ps1` | that run's binary against the one before the reviews (7.4) |
+| `tools/projfs-bench/run.ps1` | the run of section 7, in a fresh clone at `59910e101`, which holds the same code and tests: 1,767 rows, 0 FAILED |
+| `tools/projfs-bench/compare-commit.ps1` | that run's binary against the one before the reviews (7.4) |
 
 Tests that failed on the way, and what each turned out to be:
 
@@ -1749,7 +1763,7 @@ Tests that failed on the way, and what each turned out to be:
   kept; one of the next four had one, `hard_links` in `tests/m2_names.rs`:
   a Commit right after a write answered "nothing changed". This was the
   provider, not the test. The journal records of the directory the test
-  left showed it (`results/usn-probe.txt`, section 4), a deterministic test
+  left showed it (`tools/projfs-bench/records/usn-probe.txt`, section 4), a deterministic test
   was then made, and the fault is fixed (13.3). After the fix the suite
   passed three runs in a row there and once in the fresh clone. That is
   four runs, not proof that no other rare failure is left.
@@ -1757,7 +1771,7 @@ Tests that failed on the way, and what each turned out to be:
   `git_status_and_checkout_inside_the_workspace`: the Workspace's status
   was not empty after `git status` on a fresh mount. Here the provider was
   right and the test wrong. Git had rewritten its own index, which it does
-  when it cannot trust file times (`results/usn-probe.txt`, section 6). The
+  when it cannot trust file times (`tools/projfs-bench/records/usn-probe.txt`, section 6). The
   test now tells Git not to (`--no-optional-locks`); its assertion is
   unchanged. The suite then passed in a fresh clone, which is the run in
   the table.
@@ -1786,14 +1800,16 @@ file are identical. No assertion was touched.
 
 **Windows, earlier states.** Before the first review, a fresh clone at
 `bbf880c68` passed its 41 tests, Clippy and the guard, then ran the whole
-benchmark (`results/clean-checkout.txt`). After the first review's fixes, a
-fresh clone at `61aa3a4e5` passed 62 tests and ran the Commit and build
-cases (`results/clean-checkout-2.txt`).
+benchmark. After the first review's fixes, a fresh clone at `61aa3a4e5`
+passed 62 tests and ran the Commit and build cases. The two logs went out
+of the tree with those runs' output (7.8); they are in the branch's history
+at `76e404913`, as `clean-checkout.txt` and `clean-checkout-2.txt` in
+`engine/crates/layerfs-projfs/results/`.
 
-**Linux, before and after** (WSL2 Ubuntu, kernel 6.6.87.1). `bench/linux-check.sh`
+**Linux, before and after** (WSL2 Ubuntu, kernel 6.6.87.1). `tools/projfs-bench/linux-check.sh`
 clones the repository into a Linux file system and runs the same steps on the
 base `d34e753d0` (#452 merged with `main`) and on the prototype. The record
-`results/linux-check-1.85.1.txt` is of the prototype before the review, at
+`tools/projfs-bench/records/linux-check-1.85.1.txt` is of the prototype before the review, at
 `9a4fee4ca`:
 
 | Step | Base | Prototype |
@@ -1815,7 +1831,7 @@ crate and, in `tools/check_product_boundary.py`, the line that lists the
 crate's audited unsafe modules. So the last commit that changes code or
 tests, `79c119784`, was checked again on Linux for what could differ: the
 guard and its self-tests, formatting of the whole workspace, and the crate
-(`results/linux-head-check.txt`):
+(`tools/projfs-bench/records/linux-head-check.txt`):
 
 ```text
     head 79c119784; toolchain: cargo 1.85.1 (d73d2caf9 2024-12-31) / rustc 1.85.1 (4eb161250 2025-03-15) / Linux 6.6.87.1-microsoft-standard-WSL2
@@ -1835,7 +1851,7 @@ The whole before-and-after comparison was not run again for it.
 **An intermittent failure on unmodified `main`.** In the very first Linux
 comparison, made for the first version of this prototype with rustc 1.98.0,
 the base side failed `layerfs-persistence`'s `concurrent_first_installs`
-test and the prototype side passed (`results/linux-check-first-version-1.98.0.txt`;
+test and the prototype side passed (`tools/projfs-bench/records/linux-check-first-version-1.98.0.txt`;
 that record also shows the guard failing on the prototype with 16 findings,
 which were fixed by moving definitions out of `mod.rs` files). The test then
 passed in eight reruns on each side, and in both sides of the 1.85.1
@@ -1847,12 +1863,19 @@ final code, FUSE mount tests, macOS, and CI (section 1).
 
 ## 10. Edits outside the new crate
 
-Against this branch's base (#452 merged with `main`), two files:
+Against this branch's base (#452 merged with `main`), two existing files
+change and one directory is new:
 
 | File | What changed | Why it was unavoidable |
 | --- | --- | --- |
 | `tools/check_product_boundary.py` | Registers `layerfs-projfs`: its layer (engine), its first-party dependency edges, its crate-root attribute and its two audited unsafe modules, `src/sys.rs` (ProjFS) and `src/ntfs.rs` (the change journal and open-by-identity) | The guard fails closed on a crate it does not know, and on unsafe code outside a listed module |
 | `Cargo.lock` | The new package's entry | A `--locked` build needs it |
+| `tools/projfs-bench/` (new, 23 files) | The benchmark's scripts, the reported run's data and the records this report cites | Not unavoidable: a choice, so that the product crate holds only code and tests. Nothing builds or ships it. It is not a second copy of anything in the benchmark repository |
+
+`tools/projfs-bench/tables.py` is now inside the scope of the repository's
+Ruff configuration (`tools/**/*.py`). The pinned Ruff 0.17.2 was not
+installed on this machine; the file was formatted and checked with Ruff
+0.15.0.
 
 No existing crate's source or manifest changes. The second unsafe module
 came with the first review's fixes: the first version had one. The second
@@ -1952,8 +1975,10 @@ after it (`workspace/follow.rs`, and more in the journal reader and the
 capture), 6,299 now (`workspace/unfollowed.rs`).
 
 Tests are outside `src/` and are not counted: `tests/` holds fourteen test
-files and `tests/support/`. The benchmark scripts are in `bench/`, the kept
-records in `results/` and `bench/results/`.
+files and `tests/support/`. Besides them the crate holds only its manifest
+and this report. The benchmark is outside the crate, in
+`tools/projfs-bench/`: six scripts, the reported run and the comparison in
+`results/`, and nine records in `records/`.
 
 The counter sorts crates into scopes by a list of names that does not yet
 know this crate, so it reports these 6,299 lines under its "core" scope
@@ -2031,7 +2056,7 @@ The first review's other notes:
 | "A directory created in the Workspace renames normally" was not proven for a committed directory | Proven by `r2` |
 | Only the ProjFS rows run an extra `usage` walk between steps, which warms the cache in ProjFS's favour | Unchanged. The cases were run again for this report with the same script, so the bias is in the numbers of 7.2 |
 | Section 7.7 repeated "tens of milliseconds to create" without the first-use cost | Corrected |
-| The crate adds itself as an audited unsafe module, an owner decision; it keeps `bench/` and `results/` inside a product crate | Unchanged, and now two unsafe modules. For the owner to decide |
+| The crate adds itself as an audited unsafe module, an owner decision; it keeps `bench/` and `results/` inside a product crate | The unsafe modules are unchanged, and now two: for the owner to decide. The benchmark's scripts, data and records were moved out of the crate into `tools/projfs-bench/` after the last review; the crate now holds its manifest, `src/`, `tests/` and this report |
 
 ### 13.2 The second review
 
@@ -2070,7 +2095,7 @@ review).
 
 Two more faults of the same kind, found by a test that failed once in
 several runs of the suite after the second round's fixes. Neither review
-had them. `results/usn-probe.txt`, sections 4 and 5, has the journal
+had them. `tools/projfs-bench/records/usn-probe.txt`, sections 4 and 5, has the journal
 records that explain them.
 
 | Fault | Status | What changed | Test |

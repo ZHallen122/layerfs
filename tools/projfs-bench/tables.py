@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The report's measurement tables, made from one run's raw data.
 
-    python engine/crates/layerfs-projfs/bench/tables.py <results directory>
+    python tools/projfs-bench/tables.py <results directory>
 
 Reads raw.csv, environment.json and fixtures.json of one run and prints the
 Markdown of REPORT.md section 7's tables. Every figure is computed here from
@@ -9,12 +9,12 @@ the OK rows of raw.csv: the sample count, the median, the minimum and the
 maximum. Nothing is typed by hand, so the report can be checked by running
 this again and comparing the text.
 
-    python engine/crates/layerfs-projfs/bench/tables.py <results directory> --fill REPORT.md
+    python tools/projfs-bench/tables.py <results directory> --fill REPORT.md
 
 writes each table between the report's `<!-- begin:NAME -->` and
 `<!-- end:NAME -->` lines, and
 
-    python engine/crates/layerfs-projfs/bench/tables.py <results directory> --check REPORT.md
+    python tools/projfs-bench/tables.py <results directory> --check REPORT.md
 
 exits 1 unless every generated table is in the report verbatim between its
 two marker lines, and the report has no marker without a table.
@@ -80,10 +80,7 @@ def whole(value):
 def cells(values, show):
     if not values:
         return "0 | not measured | |"
-    return (
-        f"{len(values)} | {show(statistics.median(values))} | "
-        f"{show(min(values))} | {show(max(values))}"
-    )
+    return f"{len(values)} | {show(statistics.median(values))} | {show(min(values))} | {show(max(values))}"
 
 
 def table(rows, fixture, header, lines, show):
@@ -156,7 +153,10 @@ def sections(directory, commits=None, compare=None):
             f"| LayerFS through WSL2 + Docker | {environment['wsl2_docker_layerfs']} |",
         ]
     )
-    lines = ["| fixture | source | commit | files | bytes | with `.git` | Store file |", "| --- | --- | --- | ---: | ---: | ---: | ---: |"]
+    lines = [
+        "| fixture | source | commit | files | bytes | with `.git` | Store file |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: |",
+    ]
     for fixture in fixtures:
         lines.append(
             f"| {fixture['name']} | {fixture['source']} | `{fixture['commit'][:9]}` | {fixture['files']:,} | "
@@ -206,7 +206,12 @@ def sections(directory, commits=None, compare=None):
                 (f"{changed}, fresh mount", "projfs", f"status-before-commit-{count}", "wall"),
                 (f"{changed}, after use", "projfs", f"status-before-commit-used-{count}", "wall"),
                 (f"after the Commit of {files(count)}, fresh mount", "projfs", f"status-after-commit-{count}", "wall"),
-                (f"after the Commit of {files(count)}, after use", "projfs", f"status-after-commit-used-{count}", "wall"),
+                (
+                    f"after the Commit of {files(count)}, after use",
+                    "projfs",
+                    f"status-after-commit-used-{count}",
+                    "wall",
+                ),
             ]
         out[f"commit-{fixture}"] = table(late, fixture, "Commit (ms)", commits, milliseconds)
         clean = merged(late, [(fixture, "projfs", f"status-used-clean-{count}", "wall") for count in (1, 100, 1000)])
@@ -386,7 +391,10 @@ def sections(directory, commits=None, compare=None):
         whole,
     )
     if compare is not None:
-        lines = ["| the same Commit by two builds (ms) | build | n | median | min | max |", "| --- | --- | ---: | ---: | ---: | ---: |"]
+        lines = [
+            "| the same Commit by two builds (ms) | build | n | median | min | max |",
+            "| --- | --- | ---: | ---: | ---: | ---: |",
+        ]
         samples = defaultdict(list)
         for path in sorted(compare.glob("*.csv")):
             with open(path, encoding="utf-8-sig", newline="") as source:
@@ -395,7 +403,9 @@ def sections(directory, commits=None, compare=None):
                         samples[(int(row["files"]), metric, row["build"])].append(float(row[metric]))
         labels = {"wall_ms": "Commit, {} changed", "status_after_ms": "status after the Commit of {}"}
         builds = {"old": "before the reviews", "new": "the final code"}
-        for (count, metric, build), values in sorted(samples.items(), key=lambda item: (item[0][0], item[0][1] != "wall_ms", item[0][2] != "old")):
+        for (count, metric, build), values in sorted(
+            samples.items(), key=lambda item: (item[0][0], item[0][1] != "wall_ms", item[0][2] != "old")
+        ):
             lines.append(f"| {labels[metric].format(files(count))} | {builds[build]} | {cells(values, milliseconds)} |")
         out["compare"] = chr(10).join(lines)
     total = sum(failed.values())

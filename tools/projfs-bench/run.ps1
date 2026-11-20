@@ -2,7 +2,7 @@
 .SYNOPSIS
   The whole #454 ProjFS prototype benchmark, from a clean checkout:
 
-    powershell -NoProfile -ExecutionPolicy Bypass -File engine\crates\layerfs-projfs\bench\run.ps1
+    powershell -NoProfile -ExecutionPolicy Bypass -File tools\projfs-bench\run.ps1
 
 .DESCRIPTION
   Builds the release binary, prepares pinned fixtures (outside every timer),
@@ -29,14 +29,13 @@ param(
     [string]$Out = ''
 )
 $ErrorActionPreference = 'Stop'
-$Crate = Split-Path -Parent $PSScriptRoot
 # `powershell -File` hands a comma-separated list over as one string.
 $Fixtures = @($Fixtures | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 $Cases = @($Cases | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 $Known = 'sessions', 'commits', 'disk', 'builds'
 $Unknown = @($Cases | Where-Object { $Known -notcontains $_ })
 if ($Unknown.Count -or -not $Cases.Count) { throw "-Cases takes any of: $($Known -join ', '); got: $($Cases -join ', ')" }
-$Repo = (Resolve-Path (Join-Path $Crate '..\..\..')).Path
+$Repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $RunId = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 $Tag = $RunId.ToLower()
 # The source identity is read before this run writes anything into the checkout.

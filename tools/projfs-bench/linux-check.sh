@@ -6,7 +6,7 @@
 # guards on both with the same toolchain. The claim it supports is narrow:
 # on Linux the prototype changes no result. Usage (from WSL or any Linux):
 #
-#   bash engine/crates/layerfs-projfs/bench/linux-check.sh <repo> <base> <head> <work> [toolchain]
+#   bash tools/projfs-bench/linux-check.sh <repo> <base> <head> <work> [toolchain]
 #
 # With a toolchain (for example 1.85.1, the repository's) every cargo command
 # runs on it; it must be installed with rustfmt and clippy.
