@@ -516,3 +516,88 @@ fn a_directory_removed_and_made_again_holds_only_what_is_in_it_now() {
     ws.discard().expect("discard");
     fixture.close();
 }
+
+/// A conflicted merge that changes more paths than the engine lists for it
+/// (4,096, in path order). The directory follows the two trees and not the
+/// list, so the conflicted file, whose path sorts after the list's end,
+/// still gets its marker block, and the Conflict is not lost at the next
+/// Commit.
+#[test]
+fn a_conflict_among_more_changed_paths_than_the_engine_lists_reaches_the_directory() {
+    const FILES: usize = 4200;
+    let fixture = Fixture::new("arr-many");
+    let (a, b) = (fixture.mount("a"), fixture.mount("b"));
+    let mut theirs = vec![Op::Mkdir(b.root().join("bulk"))];
+    theirs.extend((0..FILES).map(|n| {
+        Op::Write(
+            at(b.root(), &format!("bulk/f{n:04}.txt")),
+            format!("{n}\n").into_bytes(),
+        )
+    }));
+    theirs.push(Op::Write(
+        at(b.root(), "src/main.rs"),
+        b"fn main() { b(); }\n".to_vec(),
+    ));
+    ops::run(fixture.home.path(), &theirs);
+    b.commit(Some("theirs")).expect("b");
+    ops::run(
+        fixture.home.path(),
+        &[Op::Write(
+            at(a.root(), "src/main.rs"),
+            b"fn main() { a(); }\n".to_vec(),
+        )],
+    );
+    let refused = a.commit(Some("mine")).expect_err("a conflict");
+    let CommitRefusal::Conflict {
+        conflicts, written, ..
+    } = &refused
+    else {
+        panic!("expected a Conflict: {refused}");
+    };
+    assert_eq!(conflicts, &["/src/main.rs".to_owned()]);
+    // The case is the one meant: the engine's list ends before the file.
+    assert!(
+        !written.iter().any(|path| path == "/src/main.rs"),
+        "the engine listed {} paths, the conflicted one among them",
+        written.len()
+    );
+    let marked = std::fs::read_to_string(at(a.root(), "src/main.rs")).expect("read");
+    assert!(
+        marked.contains("a();") && marked.contains("b();") && marked.contains("<<<<<<<"),
+        "the conflicted file holds both sides: {marked:?}"
+    );
+    assert_eq!(
+        std::fs::read(at(a.root(), &format!("bulk/f{:04}.txt", FILES - 1))).expect("read"),
+        format!("{}\n", FILES - 1).into_bytes()
+    );
+    // A Commit without a resolution is still refused: the markers are there.
+    let again = a.commit(Some("unresolved"));
+    assert!(again.is_err(), "{again:?}");
+    ops::run(
+        fixture.home.path(),
+        &[Op::Write(
+            at(a.root(), "src/main.rs"),
+            b"fn main() { a(); b(); }\n".to_vec(),
+        )],
+    );
+    a.commit(Some("resolved")).expect("resolved");
+    let (saved_shape, saved_digests) = fixture.saved("work");
+    assert_eq!(
+        saved_digests["src/main.rs"],
+        digest(b"fn main() { a(); b(); }\n")
+    );
+    assert_eq!(
+        saved_shape
+            .keys()
+            .filter(|path| path.starts_with("bulk/"))
+            .count(),
+        FILES
+    );
+    // Not `agree`: reading 4,200 files back through the mount is another
+    // test's subject and most of this one's time.
+    let status = a.status().expect("status").changes;
+    assert!(status.is_empty(), "{status:?}");
+    a.discard().expect("discard");
+    b.discard().expect("discard");
+    fixture.close();
+}
