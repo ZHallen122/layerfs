@@ -1,0 +1,116 @@
+# Probes of 2026-11-19 into the NTFS change journal (USN), made before the change tracker was
+# written. Output as printed; the user profile directory is written as %USERPROFILE%.
+# The process was not elevated (`net session` refused). Windows 11 Home 10.0.26200, volume C: (NTFS).
+
+## 1. Does reading the journal need administrator rights?
+
+# A PowerShell script (C# P/Invoke) opened a handle and issued FSCTL_QUERY_USN_JOURNAL, then
+# FSCTL_READ_USN_JOURNAL and FSCTL_READ_UNPRIVILEGED_USN_JOURNAL with the input shapes shown.
+
+open \\.\C: with GENERIC_READ: REFUSED: Access is denied
+open \\.\C: with SYNCHRONIZE|FILE_TRAVERSE: ok
+  query: journal id 1dbb1c4e01ad957, first 222272946176, next 222313957400, lowest valid 0, maximum size 33554432
+  FSCTL_READ_USN_JOURNAL input=40 bytes versions=0..0 mask=ffffffff onlyOnClose=0 : REFUSED: Access is denied
+  FSCTL_READ_USN_JOURNAL input=48 bytes versions=2..2 mask=ffffffff onlyOnClose=0 : REFUSED: Access is denied
+  FSCTL_READ_USN_JOURNAL input=48 bytes versions=2..3 mask=ffffffff onlyOnClose=0 : REFUSED: Access is denied
+  FSCTL_READ_USN_JOURNAL input=48 bytes versions=3..3 mask=ffffffff onlyOnClose=0 : REFUSED: Access is denied
+  FSCTL_READ_UNPRIVILEGED_USN_JOURNAL input=48 bytes versions=2..3 mask=ffffffff onlyOnClose=0 : REFUSED: The parameter is incorrect
+
+# The refusal of the unprivileged read was the start position: it was not a record boundary.
+# Started at the journal's first record, through a handle to a directory on the volume:
+
+open %USERPROFILE%\AppData\Local\Temp\usnprobe with FILE_LIST_DIRECTORY|FILE_TRAVERSE|SYNCHRONIZE: ok
+  query: journal id 1dbb1c4e01ad957, first 222272946176, next 222314076208, maximum size 33554432
+  FSCTL_READ_USN_JOURNAL input=40 versions=0..0 : REFUSED: Access is denied
+  FSCTL_READ_USN_JOURNAL input=48 versions=2..2 : REFUSED: Access is denied
+  FSCTL_READ_USN_JOURNAL input=48 versions=2..3 : REFUSED: Access is denied
+  FSCTL_READ_USN_JOURNAL input=48 versions=3..3 : REFUSED: Access is denied
+  FSCTL_READ_UNPRIVILEGED_USN_JOURNAL input=40 versions=0..0 : ok, 388312 records from 222272946176 to 222314076208
+  FSCTL_READ_UNPRIVILEGED_USN_JOURNAL input=48 versions=2..2 : ok, 388312 records from 222272946176 to 222314076208
+  FSCTL_READ_UNPRIVILEGED_USN_JOURNAL input=48 versions=2..3 : ok, 388312 records from 222272946176 to 222314076208
+  FSCTL_READ_UNPRIVILEGED_USN_JOURNAL input=48 versions=3..3 : ok, 388312 records from 222272946176 to 222314076208
+
+# The records it returns carry no file name. The newest of them, as version 3 records:
+
+      v3 frn=EF52030000009E0C0000000000000000 parent=D6F60100000016000000000000000000 reason=80008000 source=0 attributes=20 name=
+      v3 frn=12F50100000001000000000000000000 parent=7C200000000001000000000000000000 reason=80000001 source=0 attributes=20 name=
+      v3 frn=16B6160000004E000000000000000000 parent=C80E0000000001000000000000000000 reason=80008102 source=0 attributes=2000 name=
+
+# Answer: no administrator rights are needed. The ordinary read is refused without them. The
+# unprivileged read works through a directory handle, from a record boundary, and returns
+# identities, reasons and attributes without names.
+
+## 2. What the journal shows for a ProjFS Workspace
+
+# A throwaway test mounted a Workspace of the test fixture, let a child process act, and printed
+# the records whose file or parent lay in the Workspace: the path found by opening the file by
+# its identity (with "now attrs" and reparse tag as the provider's own process sees them), the
+# reasons, and "record-attrs", the attributes in the journal record. Attribute bits: 0x1 read-only,
+# 0x2 hidden, 0x4 system, 0x10 directory, 0x20 archive, 0x200 sparse, 0x400 reparse point,
+# 0x400000 recall on data access.
+
+## a child read README.md (hydration)
+   README.md [now attrs=0x20 tag=0x0]: EXTEND|CREATE|REPARSE source=0x0 record-attrs=0x400620 named=false
+   README.md [now attrs=0x20 tag=0x0]: EXTEND|CREATE|REPARSE|CLOSE source=0x0 record-attrs=0x400620 named=false
+   README.md [now attrs=0x20 tag=0x0]: OVERWRITE source=0x0 record-attrs=0x400620 named=false
+   README.md [now attrs=0x20 tag=0x0]: OVERWRITE|BASIC_INFO source=0x0 record-attrs=0x620 named=false
+   README.md [now attrs=0x20 tag=0x0]: OVERWRITE|BASIC_INFO|REPARSE source=0x0 record-attrs=0x620 named=false
+   README.md [now attrs=0x20 tag=0x0]: OVERWRITE|BASIC_INFO|REPARSE|CLOSE source=0x0 record-attrs=0x620 named=false
+## a child set read-only on src/main.rs (a file never read)
+   src [now attrs=0x400010 tag=0x0]: CREATE|REPARSE source=0x0 record-attrs=0x400410 named=false
+   src [now attrs=0x400010 tag=0x0]: CREATE|REPARSE|CLOSE source=0x0 record-attrs=0x400410 named=false
+   src\main.rs [now attrs=0x400021 tag=0x0]: EXTEND|CREATE|REPARSE source=0x0 record-attrs=0x400620 named=false
+   src\main.rs [now attrs=0x400021 tag=0x0]: EXTEND|CREATE|REPARSE|CLOSE source=0x0 record-attrs=0x400620 named=false
+   src\main.rs [now attrs=0x400021 tag=0x0]: REPARSE source=0x0 record-attrs=0x400620 named=false
+   src\main.rs [now attrs=0x400021 tag=0x0]: BASIC_INFO|REPARSE source=0x0 record-attrs=0x400621 named=false
+   src\main.rs [now attrs=0x400021 tag=0x0]: BASIC_INFO|REPARSE|CLOSE source=0x0 record-attrs=0x400621 named=false
+## a child created new.txt
+   new.txt [now attrs=0x20 tag=0x0]: CREATE source=0x0 record-attrs=0x20 named=false
+   new.txt [now attrs=0x20 tag=0x0]: EXTEND|CREATE source=0x0 record-attrs=0x20 named=false
+   new.txt [now attrs=0x20 tag=0x0]: EXTEND|CREATE|CLOSE source=0x0 record-attrs=0x20 named=false
+## the provider committed
+   (0 of them in the Workspace)
+## first write through an open handle
+   new.txt [now attrs=0x20 tag=0x0]: OVERWRITE source=0x0 record-attrs=0x20 named=false
+## second write through the same handle
+   (0 of them in the Workspace)
+## the handle closed
+   new.txt [now attrs=0x20 tag=0x0]: OVERWRITE|CLOSE source=0x0 record-attrs=0x20 named=false
+## a child read then deleted docs/rocket-launch.txt (a hydrated placeholder)
+   <gone: 87; parent docs>: DELETE|CLOSE source=0x0 record-attrs=0x620 named=false
+   <gone: 2; parent docs>: CREATE|REPARSE source=0x0 record-attrs=0x426 named=false
+   <gone: 2; parent docs>: CREATE|REPARSE|CLOSE source=0x0 record-attrs=0x426 named=false
+## a child deleted empty.bin (never looked at) and new.txt (a committed full file), both in the root
+   <gone: 87; parent (root)>: CREATE|REPARSE source=0x0 record-attrs=0x400620 named=false
+   <gone: 87; parent (root)>: CREATE|REPARSE|CLOSE source=0x0 record-attrs=0x400620 named=false
+   <gone: 87; parent (root)>: DELETE|CLOSE source=0x0 record-attrs=0x400620 named=false
+   <gone: 2; parent (root)>: CREATE|REPARSE source=0x0 record-attrs=0x426 named=false
+   <gone: 2; parent (root)>: CREATE|REPARSE|CLOSE source=0x0 record-attrs=0x426 named=false
+   <gone: 87; was new.txt; parent (root)>: DELETE|CLOSE source=0x0 record-attrs=0x20 named=false
+   <gone: 2; parent (root)>: CREATE|REPARSE source=0x0 record-attrs=0x426 named=false
+   <gone: 2; parent (root)>: CREATE|REPARSE|CLOSE source=0x0 record-attrs=0x426 named=false
+The provider's own listing of the root, merged view: ["README.md", "assets", "docs", "locked", "src"]
+The provider's own listing of the root, local-only: []
+## a child created pkg/ with two files, deleted pkg/a.txt, renamed pkg to pkg2
+   pkg [now attrs=0x10 tag=0x0]: CREATE source=0x0 record-attrs=0x10 named=false
+   pkg\a.txt [now attrs=0x20 tag=0x0]: EXTEND|CREATE|CLOSE source=0x0 record-attrs=0x20 named=false
+   <gone: 87; was pkg\a.txt; parent pkg>: DELETE|CLOSE source=0x0 record-attrs=0x20 named=false
+   pkg2 [now attrs=0x10 tag=0x0]: RENAME_OLD source=0x0 record-attrs=0x10 named=false
+   pkg2 [now attrs=0x10 tag=0x0]: RENAME_NEW source=0x0 record-attrs=0x10 named=false
+   pkg2 [now attrs=0x10 tag=0x0]: RENAME_NEW|CLOSE source=0x0 record-attrs=0x10 named=false
+
+# What this shows:
+# - A placeholder is created as a sparse reparse point (0x200 | 0x400) and stays one after
+#   hydration (0x620). The provider's own process sees neither attribute ("now attrs=0x20").
+# - A tombstone is a hidden system reparse point (0x426) and cannot be opened by identity while a
+#   provider runs (error 2). A deleted name leaves one in a projected directory, also when the
+#   deleted file was a full file. The provider's own listing does not show a tombstoned name.
+# - A change of the read-only attribute is a BASIC_INFO record, on a placeholder too.
+# - The first write through a handle is a record; a second write through the same handle is not.
+# - A directory keeps its identity when renamed, so a file below it is found at its new path.
+
+## 3. A store through a mapped view of a committed (full) file
+
+# From tests/tracking.rs, a_store_through_a_mapped_view_is_seen_once_the_file_is_closed:
+while the file was mapped, status showed []; size and time moved: false
+# After the file was closed the journal had the record, and the Commit stored the new byte.

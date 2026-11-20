@@ -1,14 +1,14 @@
-# Linux check of the final code commit, 2026-11-18: formatting, the guards and the new crate.
-# The full before/after comparison is linux-check-1.85.1.txt; nothing outside the crate changed since.
-# The guard here scans the SDK packages too (no --skip-sdk), hence 993 files.
+# Linux check of the final code commit, 2026-11-19: formatting, the guards and the new crate.
+# The full before/after comparison is linux-check-1.85.1.txt, of the prototype before the review.
+# The guard here scans the SDK packages too (no --skip-sdk), hence 996 files.
 
-head 5b21a183f; toolchain: cargo 1.85.1 (d73d2caf9 2024-12-31) / rustc 1.85.1 (4eb161250 2025-03-15) / Linux 6.6.87.1-microsoft-standard-WSL2
-files outside engine/crates/layerfs-projfs changed since 9a4fee4ca: []
+head 61aa3a4e5; toolchain: cargo 1.85.1 (d73d2caf9 2024-12-31) / rustc 1.85.1 (4eb161250 2025-03-15) / Linux 6.6.87.1-microsoft-standard-WSL2
+files outside engine/crates/layerfs-projfs changed since 9a4fee4ca: [tools/check_product_boundary.py ]
 fmt exit=0
-guard exit=0       1 PASS: scanned 993 production Rust/SQL/JavaScript files; semantic review still required;
+guard exit=0       1 PASS: scanned 996 production Rust/SQL/JavaScript files; semantic review still required;
 guard-tests exit=0       1 OK;      1 Ran 157 tests ;
 build-projfs exit=0       1     Finished `dev` profile [unoptimized + debuginfo] target(s) ;
-test-projfs exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) ;     12 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;
+test-projfs exit=0       1     Finished `test` profile [optimized + debuginfo] target(s) ;     14 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; ;
 clippy-projfs exit=0       1     Finished `dev` profile [unoptimized + debuginfo] target(s) ;
 done
 exit=0
