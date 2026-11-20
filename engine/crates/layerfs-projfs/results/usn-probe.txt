@@ -114,3 +114,89 @@ The provider's own listing of the root, local-only: []
 # From tests/tracking.rs, a_store_through_a_mapped_view_is_seen_once_the_file_is_closed:
 while the file was mapped, status showed []; size and time moved: false
 # After the file was closed the journal had the record, and the Commit stored the new byte.
+
+## 4. A write to a projected file, before ProjFS takes the placeholder mark off (2026-11-19)
+
+# In one run of the whole suite two tests failed (which was not kept). In one of the next four,
+# `tests/m2_names.rs` `hard_links` failed: a Commit begun right after a child process had
+# rewritten a projected file and exited answered UpToDate, with nothing captured. A
+# throwaway test then read the journal for the directory the failed test had left. These are all
+# the records whose parent is that directory, in order. 0x...286ba2 is the rewritten file,
+# 0x...2019c9 a file that was only read. Reasons: 0x1 overwrite, 0x2 extend, 0x4 truncation,
+# 0x100 create, 0x8000 basic info, 0x100000 reparse point change, 0x80000000 close. Attributes
+# as in section 2.
+
+   id 0x8b0000002d6626 reason 0x00000100 attrs 0x10
+   id 0x8b0000002d6626 reason 0x80000100 attrs 0x10
+   id 0x8b0000002d6626 reason 0x00100000 attrs 0x410
+   id 0x8b0000002d6626 reason 0x80100000 attrs 0x410
+   id 0x4e000000286ba2 reason 0x00100102 attrs 0x400620
+   id 0x4e000000286ba2 reason 0x80100102 attrs 0x400620
+   id 0x4e000000286ba2 reason 0x00000001 attrs 0x400620
+   id 0x4e000000286ba2 reason 0x00008001 attrs 0x620
+   id 0x4e000000286ba2 reason 0x00108001 attrs 0x620
+   id 0x4e000000286ba2 reason 0x80108001 attrs 0x620
+   id 0xab0000002019c9 reason 0x00100102 attrs 0x400620
+   id 0xab0000002019c9 reason 0x80100102 attrs 0x400620
+   id 0xab0000002019c9 reason 0x00000001 attrs 0x400620
+   id 0xab0000002019c9 reason 0x00008001 attrs 0x620
+   id 0xab0000002019c9 reason 0x00108001 attrs 0x620
+   id 0xab0000002019c9 reason 0x80108001 attrs 0x620
+   id 0x4e000000286ba2 reason 0x00000004 attrs 0x620
+   id 0x4e000000286ba2 reason 0x00000006 attrs 0x620
+   id 0x4e000000286ba2 reason 0x00008006 attrs 0x420
+   id 0x4e000000286ba2 reason 0x00108006 attrs 0x20
+   id 0x4e000000286ba2 reason 0x80108006 attrs 0x20
+
+# Read again from the position the failed Commit had recorded as "everything before is committed":
+
+   id 0x4e000000286ba2 reason 0x00108006 attrs 0x20
+   id 0x4e000000286ba2 reason 0x80108006 attrs 0x20
+
+# What this shows:
+# - ProjFS writes a file's content in as an overwrite (0x1) that begins while the file has the
+#   "recall on data access" attribute (0x400000), and ends with a close, all as a reparse point.
+# - The application's write (truncation, extend) is recorded while the file is still a reparse
+#   point (0x620, then 0x420). The record without the reparse attribute (0x20) and the close came
+#   after the Commit had taken its position. The tracker took every data record on a reparse
+#   point for ProjFS's own and so had nothing to look at.
+
+## 5. A write in place while another process holds the file open for reading (2026-11-19)
+
+# From the directory a failed run of `tests/tracking.rs`
+# `a_write_to_a_projected_file_a_reader_holds_open_is_in_the_next_commit` left, when the tracker
+# marked only length changes. A reader had opened the three files and kept them open; a child
+# then overwrote the first two in place (their length unchanged) and replaced the third. Every
+# record of each file, in order; the state is ProjFS's after everything was closed (8 = full).
+
+assets/large.bin id 0x8f0000001f2ce3 state Ok(Some(8))
+   reason 0x00100102 attrs 0x400620
+   reason 0x80100102 attrs 0x400620
+   reason 0x00000001 attrs 0x400620
+   reason 0x00008001 attrs 0x620
+   reason 0x00108001 attrs 0x620
+   reason 0x80108001 attrs 0x20
+src/lib/deep/mod.rs id 0x740000001fff00 state Ok(Some(8))
+   reason 0x00100102 attrs 0x400620
+   reason 0x80100102 attrs 0x400620
+   reason 0x00000001 attrs 0x400620
+   reason 0x00008001 attrs 0x620
+   reason 0x00108001 attrs 0x620
+   reason 0x80108001 attrs 0x20
+README.md id 0x5f0000001c125e state Ok(Some(8))
+   reason 0x00100102 attrs 0x400620
+   reason 0x80100102 attrs 0x400620
+   reason 0x00000001 attrs 0x400620
+   reason 0x00008001 attrs 0x620
+   reason 0x00108001 attrs 0x620
+   reason 0x00108005 attrs 0x620
+   reason 0x00108007 attrs 0x620
+   reason 0x80108007 attrs 0x20
+
+# What this shows:
+# - A reason is added to a file's record once between two closes, and the close is the last
+#   handle's: while the reader held the files, ProjFS's write-in of the content was not closed.
+# - The overwrite in place added no record at all: "overwrite" was in the record already. Until
+#   the last handle closed, the journal held nothing that tells the overwritten file from one that
+#   was only read. The close record then shows the file without the reparse attribute.
+# - So a file with a data reason and no close has to stay suspect, whatever wrote the reason.

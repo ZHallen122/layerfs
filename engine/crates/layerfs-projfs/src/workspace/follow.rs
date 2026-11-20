@@ -24,6 +24,7 @@
 //! Work follows the items on disk, never the tree.
 use super::ledger::{Ledger, Stored};
 use super::mount::{Workspace, WorkspaceError};
+use crate::ntfs::Sessions;
 use crate::provider::serve::basic_info;
 use crate::provider::tree::{join, Directory, Found, Tree};
 use crate::source::{attribute, Entry, Source, SourceError};
@@ -75,19 +76,23 @@ fn directory(tree: &Tree, typed: &str) -> Result<Option<(String, Arc<Directory>)
     }
 }
 
-/// What the file at `native` is now, for the record of committed files.
-fn stamp(native: &Path) -> std::io::Result<Stored> {
+/// What the file at `native` is now, for the record of committed files;
+/// `None` when its changes are not closed in the journal (another process
+/// has it open), so that no record can vouch for it.
+fn stamp(native: &Path, sessions: Option<&Sessions>) -> std::io::Result<Option<Stored>> {
     let file = std::fs::OpenOptions::new()
         .read(true)
         .share_mode(SHARE_ALL)
         .custom_flags(OPEN_REPARSE_POINT)
         .open(native)?;
     let metadata = file.metadata()?;
-    Ok(Stored {
-        size: metadata.len(),
-        written: metadata.last_write_time() as i64,
-        change: crate::ntfs::last_change(&file)?,
-    })
+    Ok(sessions
+        .and_then(|sessions| sessions.settled(&file))
+        .map(|change| Stored {
+            size: metadata.len(),
+            written: metadata.last_write_time() as i64,
+            change,
+        }))
 }
 
 fn read_only(native: &Path, on: bool) -> std::io::Result<()> {
@@ -106,7 +111,8 @@ fn write(
     source: &dyn Source,
     listed: &str,
     entry: &Entry,
-) -> std::io::Result<Stored> {
+    sessions: Option<&Sessions>,
+) -> std::io::Result<Option<Stored>> {
     if let Some(parent) = native.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -129,9 +135,9 @@ fn write(
     if entry.attributes & attribute::READ_ONLY != 0 {
         read_only(native, true)?;
     }
-    // Read once the writing handle is closed: the close is the file's
-    // newest change journal record.
-    stamp(native)
+    // Read once the writing handle is closed: the close is then the file's
+    // newest change journal record, unless another process has it open.
+    stamp(native, sessions)
 }
 
 struct Follow<'a> {
@@ -142,6 +148,7 @@ struct Follow<'a> {
     now: Arc<dyn Source>,
     local: Local,
     stamps: &'a mut Ledger,
+    sessions: Option<Sessions>,
     done: Rebased,
 }
 
@@ -152,6 +159,15 @@ const EVERY: i32 = PLACEHOLDER | sys::ALLOW_DIRTY_DATA | sys::ALLOW_TOMBSTONE;
 impl Follow<'_> {
     fn root(&self) -> &Path {
         self.workspace.projection.root()
+    }
+
+    /// Enters a file this step wrote into the record, or takes it out when
+    /// nothing can vouch for it.
+    fn note(&mut self, path: &str, stored: Option<Stored>) {
+        match stored {
+            Some(stored) => self.stamps.record(path, stored),
+            None => self.stamps.forget(path),
+        }
     }
 
     fn refuse(&mut self, path: &str, why: impl std::fmt::Display) {
@@ -166,9 +182,15 @@ impl Follow<'_> {
         while let Some((path, listed, entry)) = pending.pop() {
             let native = native(self.root(), &path);
             if !entry.directory {
-                match write(&native, self.now.as_ref(), &listed, &entry) {
+                match write(
+                    &native,
+                    self.now.as_ref(),
+                    &listed,
+                    &entry,
+                    self.sessions.as_ref(),
+                ) {
                     Ok(stored) => {
-                        self.stamps.record(&path, stored);
+                        self.note(&path, stored);
                         self.done.written += 1;
                     }
                     Err(error) => self.refuse(&path, error),
@@ -281,9 +303,15 @@ impl Follow<'_> {
         }
         match now {
             Some((directory, now)) => {
-                match write(&native, self.now.as_ref(), &join(directory, &now.name), now) {
+                match write(
+                    &native,
+                    self.now.as_ref(),
+                    &join(directory, &now.name),
+                    now,
+                    self.sessions.as_ref(),
+                ) {
                     Ok(stored) => {
-                        self.stamps.record(path, stored);
+                        self.note(path, stored);
                         self.done.replaced += 1;
                     }
                     Err(error) => self.refuse(path, error),
@@ -355,6 +383,7 @@ pub(super) fn follow(
         now: target.source(),
         local: Local::new(projection.root()),
         stamps,
+        sessions: Sessions::open(projection.root()).ok(),
         done: Rebased::default(),
     };
     let mut emptied = Vec::new();

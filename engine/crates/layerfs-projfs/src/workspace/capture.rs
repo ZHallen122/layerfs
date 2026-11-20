@@ -58,7 +58,9 @@ pub struct Captured {
     /// Their bytes did not change during the read; they are compared again
     /// at the next Commit.
     pub live: Vec<String>,
-    /// The same files by their identity on the volume, for the tracker.
+    /// The files, by their identity on the volume, that stay suspect for
+    /// the tracker: those in `live`, and those whose newest change journal
+    /// record is not a close, so that a later write may add no record.
     pub held: Vec<u64>,
     /// Full files whose bytes the view now holds, as they were when read.
     pub files: Vec<Seen>,
@@ -225,6 +227,9 @@ struct Capture<'a, 'w> {
     visited: std::collections::BTreeSet<String>,
     /// Paths whose bytes are compared whatever ProjFS says of the file.
     sure: &'a std::collections::BTreeSet<String>,
+    /// The volume's change journal, asked whether a file's changes are
+    /// closed. Without it no file is taken for settled.
+    sessions: Option<ntfs::Sessions>,
     /// Directories already compared whole.
     walked: std::collections::BTreeSet<String>,
     done: Captured,
@@ -571,7 +576,10 @@ impl Capture<'_, '_> {
         };
         let before = stamp(&file)?;
         // Read before the bytes: a change made during the read moves it on.
-        let change = ntfs::last_change(&file);
+        let settled = self
+            .sessions
+            .as_ref()
+            .and_then(|sessions| sessions.settled(&file));
         let length = before.0;
         let same_length = held == Some(length);
         let (mut buffer, mut offset, mut changed) = (vec![0u8; PIECE], 0u64, false);
@@ -609,13 +617,17 @@ impl Capture<'_, '_> {
             }
             self.done.live.push(path.to_owned());
             self.done.held.push(sys::identity(&file)?.index);
-        } else if let Ok(change) = change {
+        } else if let Some(change) = settled {
             self.done.files.push(Seen {
                 path: path.to_owned(),
                 size: before.0,
                 written: before.1,
                 change,
             });
+        } else {
+            // Its changes are not closed: some handle is still open, and a
+            // write through it may add no journal record.
+            self.done.held.push(sys::identity(&file)?.index);
         }
         Ok(changed)
     }
@@ -642,6 +654,7 @@ pub fn capture(
         visited: std::collections::BTreeSet::new(),
         walked: std::collections::BTreeSet::new(),
         sure: &dirty.sure,
+        sessions: ntfs::Sessions::open(root).ok(),
         done: Captured::default(),
         refused: Vec::new(),
     };

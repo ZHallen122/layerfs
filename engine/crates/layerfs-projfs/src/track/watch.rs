@@ -18,15 +18,29 @@
 //!   and so does a new name, under which its bytes are another path's;
 //! - everything else is an ordinary file or directory.
 //!
+//! A placeholder's data records need care. ProjFS writes a placeholder's
+//! content into it when it is first read, and that is no change. But an
+//! application's write to a projected file is recorded while the file is
+//! still marked a placeholder: ProjFS takes the mark off a moment later,
+//! after the write has returned. A Commit that starts in that moment must
+//! have the write. So a data record on a placeholder is a change unless it
+//! is ProjFS's own: the write-in of content begins while the file is still
+//! marked as not having its bytes, and never changes its length.
+//!
 //! One rule decides what is compared: an item that arrived at a name may
 //! have taken the place of another item the Store holds under that name. So
 //! a file that was renamed or linked is compared by its bytes, whatever
 //! ProjFS says about it, and a directory that was created, renamed or moved
 //! in is compared whole, child by child.
 //!
-//! A file that changed through a handle not yet closed stays suspect at
-//! every Commit until the journal shows the close, or a Commit reads it and
-//! finds no writer: later writes through the same handle add no record.
+//! NTFS adds a reason to a file's record only the first time it occurs
+//! between two closes, and the close is the last handle's. So while any
+//! handle on a file is open, a later write can add no record: a second
+//! write through the same handle, a write by another process while a reader
+//! holds the file, a write to a projected file after ProjFS wrote its
+//! content in. A file with data reasons and no close yet therefore stays
+//! suspect at every Commit, until the journal shows the close or a
+//! published Commit read the file and found its newest record a close.
 //! That list is handed out with the journal position it belongs to, so that
 //! it can be kept across a restart.
 use crate::ntfs::{attribute, reason, JournalError, Record, Volume};
@@ -125,9 +139,12 @@ struct State {
     directories: HashSet<u64>,
     /// The read-only bit each placeholder was created with.
     read_only: HashMap<u64, bool>,
-    /// Files changed through a handle the journal has not shown closed, or
-    /// that a capture found held open for writing. The value changes each
-    /// time the file is entered again.
+    /// Placeholders ProjFS is writing their content into, until the
+    /// journal shows that handle closed.
+    hydrating: HashSet<u64>,
+    /// Files with data reasons the journal has not shown closed, or that a
+    /// capture found held open for writing or with an unclosed record. The
+    /// value changes each time the file is entered again.
     open: HashMap<u64, u64>,
     marks: u64,
     pending: Pending,
@@ -194,6 +211,7 @@ impl Watch {
             position,
             directories: known,
             read_only: HashMap::new(),
+            hydrating: HashSet::new(),
             open: HashMap::new(),
             marks: 0,
             pending,
@@ -317,8 +335,32 @@ impl Watch {
                 // Under its new name it holds another path's bytes.
                 state.pending.files.insert(id);
             }
+            // An application's write, made before ProjFS took the mark
+            // off: the length changed (a placeholder is made with its
+            // length, so only its creation extends it), or bytes were
+            // overwritten in a file that already had them.
+            let overwritten = reasons & (reason::DATA_OVERWRITE | reason::NAMED_DATA) != 0;
+            if overwritten && attributes & attribute::RECALL_ON_DATA_ACCESS != 0 {
+                state.hydrating.insert(id);
+            }
+            let resized = reasons & reason::DATA_TRUNCATION != 0
+                || (reasons & reason::DATA_EXTEND != 0 && reasons & reason::FILE_CREATE == 0);
+            if resized || (overwritten && !state.hydrating.contains(&id)) {
+                state.pending.files.insert(id);
+            }
+            if reasons & (reason::CLOSE | reason::FILE_DELETE) != 0 {
+                state.hydrating.remove(&id);
+                state.open.remove(&id);
+            } else if resized || overwritten {
+                // Not closed, with a data reason already in its record:
+                // ProjFS writing the content in, or a write. From here an
+                // overwrite adds no record, so the two cannot be told
+                // apart until the close.
+                state.opened(id);
+            }
             return;
         }
+        state.hydrating.remove(&id);
         if inside && reasons & reason::NAME != 0 {
             state.pending.members.insert(record.parent);
         }
@@ -412,10 +454,11 @@ impl Watch {
     }
 
     /// A Commit published what `taken` held. `held` are the files its
-    /// capture found open for writing in another process: they stay
-    /// suspect. A file the capture read with no writer on it stops being
-    /// one, unless the journal entered it again meanwhile. Returns what a
-    /// later provider has to start from.
+    /// capture found open for writing in another process, or whose newest
+    /// journal record is not a close: they stay suspect. A file the capture
+    /// read whose newest record is a close stops being one, unless the
+    /// journal entered it again meanwhile. Returns what a later provider
+    /// has to start from.
     pub fn settle(&self, taken: &Taken, held: &[u64]) -> Kept {
         let mut state = self.lock();
         let still: HashSet<u64> = held.iter().copied().collect();

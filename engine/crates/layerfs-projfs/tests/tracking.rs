@@ -462,3 +462,245 @@ fn a_changed_file_that_may_not_be_opened_refuses_the_commit() {
     ws.discard().expect("discard");
     fixture.close();
 }
+
+/// A write to a projected file that has returned is in a Commit begun right
+/// after it. NTFS records such a write while the file is still marked a
+/// placeholder; ProjFS takes the mark off a moment later. A tracker that
+/// waits for the mark to go misses the write in that moment (it did: about
+/// one run in five of another test). The moment cannot be forced, so the
+/// case is run on twenty fresh mounts, four kinds of write each, with the
+/// last write of each round the likeliest to be caught in it.
+#[test]
+fn a_write_to_a_projected_file_is_in_the_commit_begun_right_after_it() {
+    let fixture = Fixture::new("tk-fresh-write");
+    let launch = "docs/\u{1f680}-launch.txt";
+    for round in 0..20usize {
+        let ws = fixture.mount(&format!("ws{round}"));
+        let root = ws.root().to_owned();
+        // Read first, so two of the files hold their bytes already.
+        ops::run(
+            fixture.home.path(),
+            &[
+                Op::Read(root.join("README.md")),
+                Op::Read(at(&root, launch)),
+            ],
+        );
+        let quiet = ws.commit(None).expect("commit");
+        assert!(
+            matches!(quiet.outcome, Outcome::UpToDate { .. }) && quiet.captured.bytes_read == 0,
+            "reading a file is not a change: {quiet:?}"
+        );
+        let stamp = format!("round {round}\n").into_bytes();
+        let mut writes = vec![
+            // replaced whole, never read before
+            Op::Write(at(&root, "src/main.rs"), stamp.clone()),
+            // replaced whole, read before
+            Op::Write(root.join("README.md"), stamp.clone()),
+            // appended to, read before
+            Op::Append(at(&root, launch), stamp.clone()),
+            // overwritten in place from its start, never read before
+            Op::Hold(at(&root, "src/lib/deep/mod.rs"), stamp.clone(), 0),
+        ];
+        writes.rotate_left(round % 4);
+        ops::run(fixture.home.path(), &writes);
+        let done = ws.commit(Some("right after")).expect("commit");
+        let (_, saved) = fixture.saved("work");
+        for path in ["src/main.rs", "README.md", launch, "src/lib/deep/mod.rs"] {
+            let on_disk = std::fs::read(at(&root, path)).expect("read");
+            assert_eq!(
+                saved.get(path),
+                Some(&digest(&on_disk)),
+                "round {round}: {path} is not in the Commit made right after its write: {done:?}"
+            );
+        }
+        ws.discard().expect("discard");
+    }
+    fixture.close();
+}
+
+/// Starts a process that opens `paths` for reading, allowing others to write
+/// them, reads the one at `read` to its end, writes the file `ready`, and
+/// keeps them all open until the file `go` exists.
+fn reader(
+    paths: &[std::path::PathBuf],
+    read: Option<usize>,
+    ready: &std::path::Path,
+    go: &std::path::Path,
+) -> std::process::Child {
+    let mut opens = String::new();
+    for path in paths {
+        opens.push_str(&format!(
+            "[System.IO.File]::Open('{}','Open','Read','ReadWrite,Delete');",
+            path.display()
+        ));
+    }
+    let read = read.map_or_else(String::new, |index| {
+        format!("while ($held[{index}].Read($b,0,65536) -gt 0) {{}};")
+    });
+    powershell(&format!(
+        "$held=@({opens}); $b=New-Object byte[] 65536; {read} Set-Content '{}' 'ready'; \
+         while (-not (Test-Path '{}')) {{ Start-Sleep -Milliseconds 20 }}; \
+         $held | ForEach-Object {{ $_.Dispose() }}",
+        ready.display(),
+        go.display()
+    ))
+}
+
+/// The same moment, held open: while another process keeps a projected file
+/// open for reading, a third writes it and exits. The write is on disk and
+/// its writer is gone; whether ProjFS has taken the placeholder mark off by
+/// then is its own business. The Commit must have the bytes: also of a file
+/// overwritten in place, for which the journal has nothing but the record
+/// of ProjFS writing its content in.
+#[test]
+fn a_write_to_a_projected_file_a_reader_holds_open_is_in_the_next_commit() {
+    let fixture = Fixture::new("tk-held-reader");
+    let ws = fixture.mount("ws");
+    let root = ws.root().to_owned();
+    let files = [
+        "README.md",
+        "src/main.rs",
+        "assets/large.bin",
+        "src/lib/deep/mod.rs",
+    ];
+    let (ready, go) = (
+        fixture.home.path().join("ready"),
+        fixture.home.path().join("go"),
+    );
+    // One of the files is read to its end first, so it holds its bytes
+    // before it is written; the others are only opened.
+    let paths: Vec<_> = files.iter().map(|path| at(&root, path)).collect();
+    let mut reader = reader(&paths, Some(2), &ready, &go);
+    wait_for("the reader holds the files", || ready.exists());
+    ops::run(
+        fixture.home.path(),
+        &[
+            Op::Write(
+                root.join("README.md"),
+                b"# written under a reader\n".to_vec(),
+            ),
+            Op::Append(at(&root, "src/main.rs"), b"// appended\n".to_vec()),
+            // Overwritten in place, the length unchanged: once a file that
+            // holds its bytes, once one that does not yet.
+            Op::Hold(at(&root, "assets/large.bin"), b"in place".to_vec(), 0),
+            Op::Hold(at(&root, "src/lib/deep/mod.rs"), b"in place".to_vec(), 0),
+        ],
+    );
+    let status = ws.status().expect("status").changes;
+    let done = ws.commit(Some("under a reader"));
+    let still_held = reader.try_wait().expect("reader").is_none();
+    let (_, saved) = fixture.saved("work");
+    std::fs::write(&go, b"go").expect("signal");
+    reader.wait().expect("reader");
+    eprintln!(
+        "held reader: status {status:?}; commit {:?}",
+        done.as_ref().map(|d| &d.outcome)
+    );
+    assert!(still_held, "the reader ended before the Commit; rerun");
+    for path in files {
+        assert_eq!(
+            saved.get(path),
+            Some(&digest(&std::fs::read(at(&root, path)).expect("read"))),
+            "{path} is not in the Commit made after its write"
+        );
+    }
+    assert_eq!(status.len(), files.len(), "{status:?}");
+    ws.discard().expect("discard");
+    fixture.close();
+}
+
+/// A reader keeps a committed file open while one process after another
+/// overwrites it in place. The first write is a journal record. The file's
+/// changes are not closed while the reader holds it, so the second write
+/// adds none; the file has to stay suspect, though no writer has it open
+/// when the first Commit reads it.
+#[test]
+fn a_second_write_under_a_reader_is_in_the_commit_after_it() {
+    let fixture = Fixture::new("tk-reader-two-writes");
+    let ws = fixture.mount("ws");
+    let file = ws.root().join("data.txt");
+    ops::run(
+        fixture.home.path(),
+        &[Op::Write(file.clone(), b"0123456789".to_vec())],
+    );
+    ws.commit(Some("committed")).expect("commit 1");
+    let (ready, go) = (
+        fixture.home.path().join("ready"),
+        fixture.home.path().join("go"),
+    );
+    let mut reader = reader(&[file.clone()], None, &ready, &go);
+    wait_for("the reader holds the file", || ready.exists());
+    let stored = |expected: &[u8]| fixture.saved("work").1["data.txt"] == digest(expected);
+
+    ops::run(
+        fixture.home.path(),
+        &[Op::Hold(file.clone(), b"AB".to_vec(), 0)],
+    );
+    let second = ws.commit(Some("first write")).expect("commit 2");
+    assert!(stored(b"AB23456789"), "{second:?}");
+    assert!(
+        second.captured.live.is_empty(),
+        "no writer has the file open: {second:?}"
+    );
+
+    ops::run(
+        fixture.home.path(),
+        &[Op::Hold(file.clone(), b"CD".to_vec(), 0)],
+    );
+    let status = ws.status().expect("status").changes;
+    let third = ws.commit(Some("second write")).expect("commit 3");
+    let still_held = reader.try_wait().expect("reader").is_none();
+    let has_second = stored(b"CD23456789");
+    std::fs::write(&go, b"go").expect("signal");
+    reader.wait().expect("reader");
+    assert!(still_held, "the reader ended before the Commit; rerun");
+    assert!(
+        has_second,
+        "the second write is not in the Commit after it: status {status:?}, {third:?}"
+    );
+    // Once the reader is gone the file's changes are closed, and the file
+    // stops being looked at: a Commit with nothing changed reads nothing.
+    wait_for("the close reaches the journal", || {
+        ws.commit(None)
+            .is_ok_and(|done| done.captured.bytes_read == 0)
+    });
+    ws.discard().expect("discard");
+    fixture.close();
+}
+
+/// The record of committed files is a shortcut, and this checks that it
+/// still is one: after the journal's records were overwritten, everything
+/// on disk is looked at, and a committed file that is exactly as its Commit
+/// read it is vouched for and not read again.
+#[test]
+fn after_overwritten_journal_records_a_committed_file_is_not_read_again() {
+    let fixture = Fixture::new("tk-vouched");
+    let ws = fixture.mount("ws");
+    let (root, state) = (ws.root().to_owned(), ws.state().to_owned());
+    ops::run(
+        fixture.home.path(),
+        &[Op::Write(root.join("big.bin"), vec![7u8; 200_000])],
+    );
+    ws.commit(Some("big")).expect("commit");
+    ws.unmount().expect("unmount");
+    let anchor = state.join("anchor");
+    let text = std::fs::read_to_string(&anchor).expect("anchor");
+    let forged: String = text
+        .lines()
+        .map(|line| match line.starts_with("usn=") {
+            true => "usn=8\n".to_owned(),
+            false => format!("{line}\n"),
+        })
+        .collect();
+    assert_ne!(forged, text);
+    std::fs::write(&anchor, forged).expect("anchor");
+    let (ws, found) = Workspace::resume(&fixture.engine, &root, None, 0).expect("resume");
+    assert_eq!(found, 0);
+    let done = ws.commit(None).expect("commit");
+    assert!(
+        matches!(done.outcome, Outcome::UpToDate { .. }) && done.captured.bytes_read == 0,
+        "{done:?}"
+    );
+    ws.discard().expect("discard");
+    fixture.close();
+}

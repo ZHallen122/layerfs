@@ -58,6 +58,9 @@ pub mod attribute {
     pub const SYSTEM: u32 = 0x4;
     pub const DIRECTORY: u32 = 0x10;
     pub const REPARSE_POINT: u32 = 0x400;
+    /// The file's bytes are not on the volume yet: ProjFS sets it on a
+    /// placeholder until its content has been written in.
+    pub const RECALL_ON_DATA_ACCESS: u32 = 0x40_0000;
 }
 
 /// One change journal record, without the name an unprivileged read omits.
@@ -160,6 +163,38 @@ pub fn last_change(file: &std::fs::File) -> std::io::Result<i64> {
 
 /// A handle on the volume a directory is on, for its journal and its files.
 pub struct Volume(std::fs::File);
+
+/// A journal to ask about single files: the volume and the journal's
+/// identity at the time it was opened.
+pub struct Sessions {
+    volume: Volume,
+    journal: u64,
+}
+
+impl Sessions {
+    /// Opens the journal of the volume `directory` is on.
+    pub fn open(directory: &Path) -> Result<Self, JournalError> {
+        let volume = Volume::open(directory).map_err(JournalError::Io)?;
+        let journal = volume.journal()?.id;
+        Ok(Self { volume, journal })
+    }
+
+    /// The number of `file`'s newest change journal record, when that
+    /// record closes the file's changes; `None` when it does not, or when
+    /// it cannot be read any more.
+    ///
+    /// NTFS adds a reason to a file's record only the first time it occurs
+    /// between two closes, and "close" is the last handle's. While any
+    /// handle is open, a second write, or a write after ProjFS wrote the
+    /// content in, can add no record at all. So only a file whose newest
+    /// record is a close is known by that record's number: the next change
+    /// to it has to write a new one.
+    pub fn settled(&self, file: &std::fs::File) -> Option<i64> {
+        let usn = last_change(file).ok()?;
+        let reason = self.volume.reason_at(self.journal, usn).ok()??;
+        (reason & reason::CLOSE != 0).then_some(usn)
+    }
+}
 
 const SYNCHRONIZE: u32 = 0x0010_0000;
 const FILE_LIST_DIRECTORY: u32 = 0x1;
@@ -293,6 +328,49 @@ impl Volume {
             }
             at = next;
         }
+    }
+
+    /// The reasons of the record at `usn`, which is a record's own number;
+    /// `None` when the journal returns another record there.
+    fn reason_at(&self, journal: u64, usn: i64) -> Result<Option<u32>, JournalError> {
+        // Room for one record with the longest name; names are left out.
+        let mut output = [0u64; 96];
+        let input = READ_USN_JOURNAL_DATA_V1 {
+            StartUsn: usn,
+            ReasonMask: u32::MAX,
+            ReturnOnlyOnClose: 0,
+            Timeout: 0,
+            BytesToWaitFor: 0,
+            UsnJournalID: journal,
+            MinMajorVersion: 2,
+            MaxMajorVersion: 2,
+        };
+        let mut returned = 0u32;
+        // SAFETY: the handle is open; `input` outlives the call; `output`
+        // is writable for the size passed.
+        let done = unsafe {
+            DeviceIoControl(
+                self.handle(),
+                FSCTL_READ_UNPRIVILEGED_USN_JOURNAL,
+                std::ptr::from_ref(&input).cast(),
+                std::mem::size_of::<READ_USN_JOURNAL_DATA_V1>() as u32,
+                output.as_mut_ptr().cast(),
+                std::mem::size_of_val(&output) as u32,
+                &mut returned,
+                std::ptr::null_mut(),
+            )
+        };
+        if done == 0 {
+            return Err(journal_error(std::io::Error::last_os_error()));
+        }
+        let header = std::mem::offset_of!(USN_RECORD_V2, FileName);
+        if (returned as usize) < 8 + header {
+            return Ok(None);
+        }
+        // SAFETY: the call wrote at least the fixed part of one record
+        // after the 8-byte position, in an 8-byte aligned buffer.
+        let record = unsafe { &*output.as_ptr().add(1).cast::<USN_RECORD_V2>() };
+        Ok((record.MajorVersion == 2 && record.Usn == usn).then_some(record.Reason))
     }
 
     /// Opens the file with this identity; `None` when the volume has no such
