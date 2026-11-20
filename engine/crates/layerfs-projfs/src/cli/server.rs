@@ -115,6 +115,11 @@ fn commit(mounted: &Mounted, message: &str) -> String {
                 ("rebased_updated", committed.rebased.updated.to_string()),
                 ("rebased_removed", committed.rebased.removed.to_string()),
                 ("rebased_replaced", committed.rebased.replaced.to_string()),
+                ("rebased_written", committed.rebased.written.to_string()),
+                (
+                    "rebased_kept",
+                    json::strings(committed.rebased.kept.iter().map(String::as_str)),
+                ),
                 (
                     "warnings",
                     json::strings(committed.warnings.iter().map(String::as_str)),
@@ -123,7 +128,10 @@ fn commit(mounted: &Mounted, message: &str) -> String {
             ])
         }
         Err(CommitRefusal::Conflict {
-            head, conflicts, ..
+            head,
+            conflicts,
+            rebased,
+            ..
         }) => object(&[(
             "error",
             object(&[
@@ -136,6 +144,10 @@ fn commit(mounted: &Mounted, message: &str) -> String {
                 (
                     "conflicts",
                     json::strings(conflicts.iter().map(String::as_str)),
+                ),
+                (
+                    "kept",
+                    json::strings(rebased.kept.iter().map(String::as_str)),
                 ),
             ]),
         )]),

@@ -4,26 +4,26 @@
 //!
 //! Publication, merge with a moved Branch head and Conflict detection are
 //! the engine's (`BoundWorkspace::commit_captured`); nothing here decides
-//! them. A conflicted merge publishes nothing: the engine installs the
-//! merged files with marker blocks in the Workspace view, and they are
-//! written to the local directory for the user to resolve, as a FUSE mount
-//! would show them.
+//! them. When the engine installs a root that is not the one this Workspace
+//! captured (a merge, clean or conflicted), the directory is brought to it
+//! (`follow.rs`). A conflicted merge publishes nothing: the engine installs
+//! the merged files with marker blocks in the Workspace view, and they
+//! reach the local directory the same way, for the user to resolve, as a
+//! FUSE mount would show them.
 use super::capture::{capture, CaptureError, Captured};
+use super::follow::{follow, Rebased};
 use super::ledger::{Ledger, Stored};
 use super::mount::{Workspace, WorkspaceError};
-use crate::provider::serve::basic_info;
-use crate::provider::tree::{join, Found, Tree};
+use crate::provider::tree::Tree;
 use crate::source::snapshot::SnapshotSource;
 use crate::sys;
 use crate::track::journal::Recorded;
-use crate::track::local::{native, Local, LocalItem};
+use crate::track::local::{native, LocalItem};
 use crate::track::watch::Pending;
-use layerfs_content::object::inode_leaf::InodeKind;
 use layerfs_content::ObjectId;
 use layerfs_history::CommitOutcome;
 use layerfs_store_service::history::lookup::hex;
 use layerfs_store_service::store::CommitOptions;
-use layerfs_store_service::write::mutation::Mutation;
 use std::sync::Arc;
 
 /// What a Commit published.
@@ -33,21 +33,6 @@ pub enum Outcome {
     Committed { commit: String, root: String },
     /// Nothing differed from the Branch's head.
     UpToDate { head: Option<String>, root: String },
-}
-
-/// On-disk items brought to a new base.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Rebased {
-    /// On-disk placeholders given the new base's facts and content.
-    pub updated: u64,
-    /// On-disk placeholders removed because the new base has no such file.
-    pub removed: u64,
-    /// Committed full files, unchanged since their Commit, that the new
-    /// base holds differently or not at all: removed from the disk, so the
-    /// new base shows through.
-    pub replaced: u64,
-    /// On-disk items ProjFS would not change, with its reason bits.
-    pub refused: Vec<(String, i32)>,
 }
 
 /// A successful Commit.
@@ -75,7 +60,13 @@ pub enum CommitRefusal {
         head: Option<String>,
         conflicts: Vec<String>,
         written: Vec<String>,
+        /// What the directory did to follow the merge.
+        rebased: Box<Rebased>,
     },
+    /// An earlier Commit or Conflict installed a new base and the directory
+    /// could not follow it. Unmount and resume: the next provider finishes
+    /// the step.
+    Behind(String),
     /// The engine refused; the Workspace is unchanged and may commit again.
     Failed(String),
     /// The Branch moved while no provider served this Workspace. The engine
@@ -97,6 +88,7 @@ impl std::fmt::Display for CommitRefusal {
                 conflicts.len()
             ),
             Self::Failed(text) => write!(f, "Failed: {text}"),
+            Self::Behind(text) => write!(f, "Failed: {text}"),
             Self::Diverged { recorded, head } => write!(
                 f,
                 "Diverged: the Branch moved from {recorded} to {head} while this Workspace \
@@ -108,116 +100,19 @@ impl std::fmt::Display for CommitRefusal {
 }
 impl std::error::Error for CommitRefusal {}
 
-fn failed(error: impl std::fmt::Display) -> CommitRefusal {
-    CommitRefusal::Failed(error.to_string())
-}
-
-/// Brings the on-disk items from `old` to `new`: every placeholder whose
-/// base entry changed, and every committed full file that is still as it
-/// was committed and that `new` holds differently. A full file changed
-/// since its Commit is a local change and is left alone. Work follows the
-/// items on disk, not the tree.
-fn rebase(
-    workspace: &Workspace,
-    old: &Tree,
-    new: &Tree,
-    ledger: &mut Ledger,
-) -> Result<Rebased, WorkspaceError> {
-    let projection = &workspace.projection;
-    let flags = sys::ALLOW_DIRTY_METADATA | sys::ALLOW_READ_ONLY;
-    let mut rebased = Rebased::default();
-    let _local = projection.provider().local_only();
-    let mut local = Local::new(projection.root());
-    let wrap = |e: &dyn std::fmt::Display| WorkspaceError::Failed(format!("baseline update: {e}"));
-    // The record holds files of earlier Commits only: this Commit's are
-    // added after this update. For each, the old base's entry is what this
-    // Workspace committed.
-    for (path, stored) in ledger.files() {
-        let entry = |tree: &Tree| match tree.resolve(&path) {
-            Ok(Some(Found::Entry { entry, .. })) => Ok(Some(entry)),
-            Ok(_) => Ok(None),
-            Err(error) => Err(wrap(&error)),
-        };
-        if entry(old)? == entry(new)? {
-            continue;
-        }
-        // The Branch holds something else at this path now. What this
-        // Workspace committed there is replaced unless it changed since.
-        ledger.forget(&path);
-        let unchanged = local
-            .find(&path)
-            .map_err(|e| wrap(&e))?
-            .is_some_and(|(spelled, item)| {
-                !item.directory && stored.is(&native(projection.root(), &spelled), &item)
-            });
-        if !unchanged {
-            continue;
-        }
-        let every = flags | sys::ALLOW_DIRTY_DATA | sys::ALLOW_TOMBSTONE;
-        match projection
-            .instance()
-            .delete_item(&path.replace('/', "\\"), every)
-        {
-            Ok(_) => rebased.replaced += 1,
-            Err((_, cause)) => rebased.refused.push((path, cause)),
-        }
-    }
-    for path in ledger.tombstones() {
-        // A name this Workspace deleted is back in the base: its tombstone
-        // would hide it.
-        if new.resolve(&path).map_err(|e| wrap(&e))?.is_some()
-            && projection
-                .instance()
-                .delete_item(&path.replace('/', "\\"), sys::ALLOW_TOMBSTONE)
-                .is_ok()
-        {
-            ledger.cleared(&path);
-        }
-    }
-    let mut pending = vec![String::new()];
-    while let Some(directory) = pending.pop() {
-        for item in local
-            .list(&directory)
-            .map_err(|e| wrap(&e))?
-            .unwrap_or_default()
-        {
-            let path = join(&directory, &item.name);
-            if item.directory {
-                pending.push(path);
-                continue;
-            }
-            let state = local.state(&path).map_err(|e| wrap(&e))?.unwrap_or(0);
-            let placeholder = state & (sys::state::PLACEHOLDER | sys::state::HYDRATED) != 0
-                && state & sys::state::FULL == 0;
-            if !placeholder {
-                continue;
-            }
-            let Some(Found::Entry { entry: was, .. }) = old.resolve(&path).map_err(|e| wrap(&e))?
-            else {
-                continue;
-            };
-            let name = path.replace('/', "\\");
-            let done = match new.resolve(&path).map_err(|e| wrap(&e))? {
-                Some(Found::Entry { entry: now, .. }) if !now.directory => {
-                    if now == was {
-                        continue;
-                    }
-                    projection
-                        .instance()
-                        .update_item(&name, &basic_info(&now), &now.content, flags)
-                        .map(|changed| rebased.updated += u64::from(changed))
-                }
-                _ => projection
-                    .instance()
-                    .delete_item(&name, flags)
-                    .map(|changed| rebased.removed += u64::from(changed)),
-            };
-            if let Err((_, cause)) = done {
-                rebased.refused.push((path, cause));
-            }
-        }
-    }
-    Ok(rebased)
+/// What a caller is told about the items the directory could not bring to
+/// a new base.
+fn told(rebased: &Rebased) -> Vec<String> {
+    let kept = rebased.kept.iter().map(|path| {
+        format!(
+            "{path} changed after the Commit read it, and the merge changed it too: the \
+             directory keeps your file, and the next Commit stores it over the merged one"
+        )
+    });
+    let refused = rebased.refused.iter().map(|(path, why)| {
+        format!("{path} could not be brought to the new base ({why}): it shows the old one")
+    });
+    kept.chain(refused).collect()
 }
 
 impl Workspace {
@@ -227,55 +122,60 @@ impl Workspace {
             .map_err(|e| WorkspaceError::Failed(format!("base tree: {e}")))
     }
 
-    /// Serves the root the engine has now installed, updating on-disk
-    /// placeholders when `merged` brought in changes this Workspace did
-    /// not make.
-    fn advance(&self, merged: bool, ledger: &mut Ledger) -> Result<Rebased, WorkspaceError> {
+    /// Serves the root the engine has now installed. `replaced` is set when
+    /// that root is not the one this Workspace captured: the tree the
+    /// directory shows, and the tree installed in its place. The directory
+    /// is then brought from the one to the other.
+    ///
+    /// The state directory is told first, before anything on disk changes:
+    /// which base is served from now on, and which step is unfinished. A
+    /// provider that stops in between leaves a directory the next one can
+    /// finish, not one whose base nobody knows.
+    fn advance(
+        &self,
+        replaced: Option<(ObjectId, ObjectId)>,
+        stamps: &mut Ledger,
+    ) -> Result<Rebased, WorkspaceError> {
         let snapshot = self
             .bound
             .snapshot()
             .map_err(|e| WorkspaceError::Failed(format!("binding: {e}")))?;
         let source = self.source_at(snapshot.effective_root)?;
-        let tree = &self.projection.provider().tree;
-        // The new base is served first: a file first opened from now on is
-        // projected from it, and what is already on disk is brought over
-        // against the old one.
-        let old = Tree::new(tree.source());
-        tree.replace(source);
-        let rebased = if merged {
-            rebase(self, &old, tree, ledger)?
-        } else {
-            Rebased::default()
+        self.write_record(replaced)?;
+        // The new base is served from here: a file first opened from now on
+        // is projected from it.
+        self.projection.provider().tree.replace(source);
+        let Some((shown, installed)) = replaced else {
+            return Ok(Rebased::default());
         };
-        self.write_record()?;
+        let rebased = self.follow(shown, installed, stamps)?;
+        self.write_record(None)?;
         Ok(rebased)
     }
 
-    /// Records what the published Commit stored for the files the capture
-    /// read, and clears the tombstones of the names it removed.
-    fn settle(&self, ledger: &mut Ledger, captured: &Captured) {
-        let root = self.projection.root();
+    /// Brings the directory from the tree `shown` to the tree `installed`.
+    pub(super) fn follow(
+        &self,
+        shown: ObjectId,
+        installed: ObjectId,
+        stamps: &mut Ledger,
+    ) -> Result<Rebased, WorkspaceError> {
+        let shown = Tree::new(self.source_at(shown)?);
+        let target = Tree::new(self.source_at(installed)?);
+        follow(self, &shown, &target, stamps)
+    }
+
+    /// Enters what the capture read into `stamps`: each file as it was when
+    /// its bytes reached the view, which is what this Workspace holds at
+    /// that path whatever a merge then makes of it.
+    fn note(stamps: &mut Ledger, captured: &Captured) {
         for path in &captured.removed {
-            ledger.forget(path);
-            // The deletion is committed: the base no longer holds the name,
-            // so the marker that hid it has nothing left to hide. Left on
-            // disk it would hide the name if another Workspace brings it
-            // back. Something else may be at the path by now; that stays.
-            if std::fs::symlink_metadata(native(root, path)).is_ok() {
-                continue;
-            }
-            let cleared = self
-                .projection
-                .instance()
-                .delete_item(&path.replace('/', "\\"), sys::ALLOW_TOMBSTONE);
-            if cleared.is_err() {
-                ledger.tombstone(path);
-            }
+            stamps.forget(path);
         }
         // No tree is read for this: the size, time and journal number a
         // file had when the capture read it are the whole record.
         for seen in &captured.files {
-            ledger.record(
+            stamps.record(
                 &seen.path,
                 Stored {
                     size: seen.size,
@@ -286,47 +186,23 @@ impl Workspace {
         }
     }
 
-    /// Writes the view's present content of `paths` into the directory.
-    fn materialize(&self, paths: &[String]) -> Result<(), CommitRefusal> {
-        let mutation = Mutation::new(&self.bound).map_err(|r| failed(r.message))?;
-        let result = (|| {
-            for path in paths {
-                // Written by this process; the volume's change journal
-                // marks them like any other change.
-                let relative = path.trim_start_matches('/');
-                let local = native(self.projection.root(), relative);
-                match mutation.optional(path).map_err(|r| failed(r.message))? {
-                    Some(stat) if stat.kind == InodeKind::RegularFile => {
-                        if let Some(parent) = local.parent() {
-                            std::fs::create_dir_all(parent).map_err(failed)?;
-                        }
-                        let mut bytes = Vec::with_capacity(stat.logical_len as usize);
-                        while (bytes.len() as u64) < stat.logical_len {
-                            let piece = mutation
-                                .read(stat.serial, bytes.len() as u64, 32 * 1024)
-                                .map_err(|r| failed(r.message))?;
-                            if piece.is_empty() {
-                                return Err(failed(format!("{path} ended early")));
-                            }
-                            bytes.extend_from_slice(&piece);
-                        }
-                        std::fs::write(&local, bytes).map_err(failed)?;
-                    }
-                    Some(stat) if stat.kind == InodeKind::Directory => {
-                        std::fs::create_dir_all(&local).map_err(failed)?;
-                    }
-                    Some(_) => {}
-                    None => match std::fs::remove_file(&local) {
-                        Ok(()) => {}
-                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(e) => return Err(failed(e)),
-                    },
-                }
+    /// Clears the tombstones of the names a published Commit removed.
+    fn clear(&self, captured: &Captured) {
+        let root = self.projection.root();
+        for path in &captured.removed {
+            // The deletion is committed: the base no longer holds the name,
+            // so the marker that hid it has nothing left to hide. Left on
+            // disk it would hide the name if another Workspace brings it
+            // back; a later merge clears it then, when this fails now.
+            // Something else may be at the path by now; that stays.
+            if std::fs::symlink_metadata(native(root, path)).is_ok() {
+                continue;
             }
-            Ok(())
-        })();
-        mutation.finish().map_err(|r| failed(r.message))?;
-        result
+            let _ = self
+                .projection
+                .instance()
+                .delete_item(&path.replace('/', "\\"), sys::ALLOW_TOMBSTONE);
+        }
     }
 
     /// Commits the Workspace's changes to its Branch: one capture, one
@@ -343,20 +219,29 @@ impl Workspace {
                 head: head.clone(),
             });
         }
+        if let Some(why) = self.behind() {
+            return Err(CommitRefusal::Behind(why));
+        }
         let recorded = self.projection.provider().journal.recorded();
-        // Everything before `position` in the change journal is in
-        // `pending`; what comes after stays with the tracker.
-        let (pending, position) = self.projection.watch().take();
+        // Everything before the taken position in the change journal is in
+        // `taken`; what comes after stays with the tracker.
+        let taken = self.projection.watch().take();
         let mut ledger = self
             .ledger
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        let mut published = self.publish(message, &recorded, &pending, &mut ledger);
+        let mut published = self.publish(message, &recorded, &taken.pending, &mut ledger);
         match &mut published {
             // Published: a failure from here on does not undo it, and is
             // told beside it instead of in its place.
             Ok(committed) => {
-                if let Err(error) = self.projection.settle(position) {
+                // A file the capture found open for writing stays suspect:
+                // its handle may write again without a journal record.
+                let kept = self
+                    .projection
+                    .watch()
+                    .settle(&taken, &committed.captured.held);
+                if let Err(error) = self.projection.settle(&kept) {
                     committed.warnings.push(format!(
                         "the change journal position was not recorded ({error}): \
                          after a restart everything on disk is compared once"
@@ -370,7 +255,7 @@ impl Workspace {
                 }
             }
             // Nothing is known to be published: every item stays suspect.
-            Err(_) => self.projection.watch().restore(pending),
+            Err(_) => self.projection.watch().restore(taken),
         }
         published
     }
@@ -421,31 +306,51 @@ impl Workspace {
             })?;
         let merged = success.merge.is_some();
         let mut warnings = Vec::new();
-        // The engine installed a root: the Commit's, or a merge's.
-        let rebased = match self.advance(merged, ledger) {
+        // The engine installed a root: the Commit's, or a merge's. What
+        // the capture read goes into the record of committed files first,
+        // so that the directory can tell a file it captured from one that
+        // changed since. Without a publication the files are not
+        // committed: the record is tried on a copy and keeps only what it
+        // agrees with.
+        let followed = if success.history.is_some() {
+            Self::note(ledger, &captured);
+            self.advance(success.replaced, ledger)
+        } else {
+            let mut tried = ledger.clone();
+            Self::note(&mut tried, &captured);
+            let followed = self.advance(success.replaced, &mut tried);
+            ledger.keep_same(&tried);
+            followed
+        };
+        let rebased = match followed {
             Ok(rebased) => rebased,
-            Err(error) if success.history.is_some() => {
-                warnings.push(format!(
-                    "the directory was not brought to the new base ({error}): \
-                     unmount and resume before the next Commit"
-                ));
+            Err(error) => {
+                let why = format!(
+                    "the directory did not follow the new base ({error}): unmount and \
+                     resume, and the next provider finishes the step"
+                );
+                self.fall_behind(&why);
+                if success.history.is_none() {
+                    return Err(CommitRefusal::Behind(why));
+                }
+                warnings.push(why);
                 Rebased::default()
             }
-            Err(error) => return Err(failed(error)),
         };
+        warnings.extend(told(&rebased));
         let Some(history) = success.history else {
             let merge = success.merge.unwrap_or_else(unreachable_merge);
-            self.materialize(&merge.written)?;
             return Err(CommitRefusal::Conflict {
                 head: merge.head.map(|id| hex(id.as_slice())),
                 conflicts: merge.conflicts.iter().map(|c| c.path.clone()).collect(),
                 written: merge.written,
+                rebased: Box::new(rebased),
             });
         };
         // Published. A file still open for writing is compared again at
         // the next Commit: the tracker keeps it until the journal shows
         // its handle closed.
-        self.settle(ledger, &captured);
+        self.clear(&captured);
         if let Err(error) = provider.journal.forget_through(recorded.sequence) {
             warnings.push(format!(
                 "the reported renames were not cleared ({error}): they are replayed, \

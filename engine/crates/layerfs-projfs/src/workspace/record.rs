@@ -12,6 +12,11 @@ pub struct Record {
     pub root: String,
     /// Hex identity of the base Commit; empty on a Branch without one.
     pub head: String,
+    /// Set while the directory is being brought to a new base: the hex
+    /// identity of the tree it showed before, and of the tree it is brought
+    /// to. A provider that finds them finishes the step.
+    pub shown: String,
+    pub target: String,
 }
 
 impl Record {
@@ -26,6 +31,8 @@ impl Record {
                 Some(("branch", value)) => record.branch = value.to_owned(),
                 Some(("root", value)) => record.root = value.to_owned(),
                 Some(("head", value)) => record.head = value.to_owned(),
+                Some(("shown", value)) => record.shown = value.to_owned(),
+                Some(("target", value)) => record.target = value.to_owned(),
                 _ => {}
             }
         }
@@ -36,14 +43,18 @@ impl Record {
     }
 
     pub fn write(&self, state: &Path) -> Result<(), String> {
-        let path = state.join("workspace");
-        std::fs::write(
-            &path,
-            format!(
-                "project={}\nbranch={}\nroot={}\nhead={}\n",
-                self.project, self.branch, self.root, self.head
-            ),
-        )
-        .map_err(|error| format!("Workspace record {}: {error}", path.display()))
+        // Written beside and renamed in: a torn record would lose which
+        // base the directory shows.
+        let (path, beside) = (state.join("workspace"), state.join("workspace.new"));
+        let mut text = format!(
+            "project={}\nbranch={}\nroot={}\nhead={}\n",
+            self.project, self.branch, self.root, self.head
+        );
+        if !self.shown.is_empty() {
+            text.push_str(&format!("shown={}\ntarget={}\n", self.shown, self.target));
+        }
+        std::fs::write(&beside, text)
+            .and_then(|()| std::fs::rename(&beside, &path))
+            .map_err(|error| format!("Workspace record {}: {error}", path.display()))
     }
 }

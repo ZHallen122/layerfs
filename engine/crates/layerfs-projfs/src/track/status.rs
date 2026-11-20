@@ -151,8 +151,9 @@ pub fn bytes_differ(
 }
 
 /// Whether the local file differs from the base file: other bytes, or
-/// another read-only attribute. A placeholder, hydrated or not, still holds
-/// the base's bytes by construction and is never read.
+/// another read-only attribute. A placeholder, hydrated or not, holds the
+/// base's bytes for the path it was made at, and is not read unless `sure`
+/// says its bytes are to be compared whatever ProjFS says of it.
 fn file_differs(
     local: &Local,
     path: &str,
@@ -160,13 +161,15 @@ fn file_differs(
     source: &dyn Source,
     base_path: &str,
     base: &Entry,
+    sure: bool,
 ) -> Result<bool, StatusError> {
     if (item.attributes ^ base.attributes) & attribute::READ_ONLY != 0 {
         return Ok(true);
     }
-    let full = local
-        .state(path)?
-        .is_some_and(|bits| bits & sys::state::FULL != 0);
+    let full = sure
+        || local
+            .state(path)?
+            .is_some_and(|bits| bits & sys::state::FULL != 0);
     if !full {
         return Ok(false);
     }
@@ -194,6 +197,8 @@ struct Classifier<'a> {
     source: std::sync::Arc<dyn Source>,
     local: Local,
     renames: &'a [Rename],
+    /// Paths whose bytes are compared whatever ProjFS says of the file.
+    sure: &'a BTreeSet<String>,
     links: Vec<String>,
     seen: BTreeSet<String>,
     changes: Vec<Change>,
@@ -213,7 +218,13 @@ impl Classifier<'_> {
     /// Compares the names a directory shows now with the names its base
     /// directory holds.
     fn members(&mut self, directory: &str, listed: &[String]) -> Result<(), StatusError> {
-        let renamed = origin(directory, self.renames);
+        // A directory renamed onto a name the base holds took that
+        // directory's place: it is compared with it, not explained as a move.
+        let replaced = matches!(
+            self.provider.tree.resolve(directory)?,
+            Some(found) if found.is_directory()
+        );
+        let renamed = origin(directory, self.renames).filter(|_| !replaced);
         let from = renamed
             .as_ref()
             .map_or(directory, |(from, _)| from.as_str());
@@ -253,8 +264,35 @@ impl Classifier<'_> {
             // New to the base, or held by it under another spelling.
             let held = base.as_ref().and_then(|base| base.find(name));
             if held.is_none_or(|entry| entry.name != *name) {
-                self.classify(&join(directory, name))?;
+                self.classify(&join(directory, name), false)?;
             }
+        }
+        Ok(())
+    }
+
+    /// Compares a directory that arrived at its name with the base: every
+    /// file below it by its bytes, then every directory's names.
+    fn tree(&mut self, directory: &str) -> Result<(), StatusError> {
+        let mut walk = vec![directory.to_owned()];
+        while let Some(at) = walk.pop() {
+            self.classify(&at, true)?;
+            let Some((spelled, item)) = self.local.find(&at)? else {
+                continue;
+            };
+            if !item.directory || item.link() {
+                continue;
+            }
+            let children = self.local.list(&spelled)?.unwrap_or_default();
+            for child in &children {
+                let below = join(&spelled, &child.name);
+                if child.directory && !child.link() {
+                    walk.push(below);
+                } else {
+                    self.classify(&below, true)?;
+                }
+            }
+            let listed: Vec<String> = children.into_iter().map(|child| child.name).collect();
+            self.members(&spelled, &listed)?;
         }
         Ok(())
     }
@@ -284,10 +322,17 @@ impl Classifier<'_> {
     }
 
     /// Classifies an on-disk item the base holds nothing for at its path.
-    fn unmatched(&mut self, path: &str, item: &LocalItem) -> Result<(), StatusError> {
+    fn unmatched(&mut self, path: &str, item: &LocalItem, sure: bool) -> Result<(), StatusError> {
         let Some((from, exact)) = origin(path, self.renames) else {
             return self.add(path, item);
         };
+        // Below a renamed directory that took the place of one the base
+        // holds, a name the base lacks is new, whatever the directory's
+        // old path held under it.
+        let parent = path.rsplit_once('/').map_or("", |(parent, _)| parent);
+        if !exact && self.base(parent)?.is_some_and(|(_, base)| base.directory) {
+            return self.add(path, item);
+        }
         let Some((base_path, base)) = self.base(&from)? else {
             return self.add(path, item);
         };
@@ -303,6 +348,7 @@ impl Classifier<'_> {
                 self.source.as_ref(),
                 &base_path,
                 &base,
+                sure,
             )?;
         match (exact, same) {
             (true, true) => {
@@ -325,7 +371,7 @@ impl Classifier<'_> {
         Ok(())
     }
 
-    fn classify(&mut self, typed: &str) -> Result<(), StatusError> {
+    fn classify(&mut self, typed: &str, sure: bool) -> Result<(), StatusError> {
         let Some((path, item)) = self.local.find(typed)? else {
             if let Some((base_path, base)) = self.base(typed)? {
                 self.deleted.insert(base_path, base.directory);
@@ -335,6 +381,7 @@ impl Classifier<'_> {
         if !self.seen.insert(folded(&path)) {
             return Ok(());
         }
+        let sure = sure || self.sure.contains(&path);
         if item.link() {
             // Never followed: named, and what the base held there is gone.
             self.links.push(path.clone());
@@ -344,7 +391,7 @@ impl Classifier<'_> {
             return Ok(());
         }
         match self.base(&path)? {
-            None => self.unmatched(&path, &item),
+            None => self.unmatched(&path, &item, sure),
             Some((base_path, base)) if base.directory != item.directory => {
                 self.deleted.insert(base_path, base.directory);
                 self.add(&path, &item)
@@ -369,6 +416,7 @@ impl Classifier<'_> {
                         self.source.as_ref(),
                         &base_path,
                         &base,
+                        sure,
                     )?
                 {
                     self.changes.push(Change {
@@ -398,6 +446,7 @@ pub fn changes(
         source: provider.tree.source(),
         local,
         renames: &recorded.renames,
+        sure: &dirty.sure,
         links: Vec::new(),
         seen: BTreeSet::new(),
         changes: Vec::new(),
@@ -406,13 +455,19 @@ pub fn changes(
     };
     // A renamed item is looked at first: it accounts for its old name.
     for rename in &recorded.renames {
-        classifier.classify(&rename.to)?;
+        classifier.classify(&rename.to, false)?;
+    }
+    for directory in &dirty.trees {
+        classifier.tree(directory)?;
+    }
+    for typed in &dirty.sure {
+        classifier.classify(typed, true)?;
     }
     for (directory, listed) in &dirty.listings {
         classifier.members(directory, listed)?;
     }
     for typed in &dirty.paths {
-        classifier.classify(typed)?;
+        classifier.classify(typed, false)?;
     }
     let Classifier {
         mut changes,

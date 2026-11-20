@@ -212,6 +212,9 @@ fn when_the_change_journal_cannot_answer_everything_on_disk_is_compared() {
             Op::ReadOnly(root.join("README.md"), true),
             Op::Mkdir(root.join("made")),
             Op::Write(at(&root, "made/inside.txt"), b"inside".to_vec()),
+            // A file read and never changed: it holds its bytes on disk,
+            // and they are the base's.
+            Op::Read(at(&root, "assets/large.bin")),
         ],
     );
     let expected = vec![
@@ -248,6 +251,15 @@ fn when_the_change_journal_cannot_answer_everything_on_disk_is_compared() {
         .commit(Some("after the journal was lost"))
         .expect("commit");
     assert!(matches!(done.outcome, Outcome::Committed { .. }));
+    // "Everything" is every full file, every name and every placeholder's
+    // facts. A placeholder whose size and time are the base's is not read:
+    // neither the megabyte that is on disk, nor a file that is not.
+    assert!(
+        done.captured.bytes_read < 1024,
+        "the Commit read {} bytes",
+        done.captured.bytes_read
+    );
+    assert_eq!(ws.projection().provider().served().reads, 0);
     let (saved_shape, saved_digests) = fixture.saved("work");
     assert_eq!(saved_shape, shape(&root));
     assert_eq!(saved_digests, tree_digests(&root));
@@ -393,5 +405,60 @@ fn discard_removes_every_kind_of_item_a_session_leaves() {
     assert_eq!(ws.status().expect("status").changes.len(), 6);
     ws.discard().expect("discard");
     assert!(!root.exists(), "the Workspace directory is gone");
+    fixture.close();
+}
+
+fn icacls(file: &std::path::Path, arguments: &[&str]) {
+    let done = Command::new("icacls")
+        .arg(file)
+        .args(arguments)
+        .stdout(Stdio::null())
+        .status()
+        .expect("icacls");
+    assert!(done.success(), "icacls {arguments:?}");
+}
+
+/// A changed file that is on the volume and may not be opened is not taken
+/// for a file that is gone: nobody knows what it holds. Status and Commit
+/// say so and publish nothing, until it can be opened again.
+#[test]
+fn a_changed_file_that_may_not_be_opened_refuses_the_commit() {
+    let fixture = Fixture::new("tk-denied");
+    let ws = fixture.mount("ws");
+    let file = ws.root().join("guarded.txt");
+    ops::run(
+        fixture.home.path(),
+        &[Op::Write(file.clone(), b"one".to_vec())],
+    );
+    ws.commit(Some("one")).expect("commit 1");
+    ops::run(
+        fixture.home.path(),
+        &[Op::Write(file.clone(), b"two".to_vec())],
+    );
+    // Everyone is denied everything on the file itself.
+    icacls(&file, &["/deny", "*S-1-1-0:(F)"]);
+    let status = ws.status();
+    let refused = ws.commit(Some("two"));
+    icacls(&file, &["/remove:d", "*S-1-1-0"]);
+    let text = |error: &dyn std::fmt::Display| error.to_string();
+    let status = status.as_ref().map(|_| ()).map_err(|e| text(e));
+    let refused = refused.as_ref().map(|_| ()).map_err(|e| text(e));
+    eprintln!("denied: status {status:?}; commit {refused:?}");
+    assert_eq!(
+        fixture.saved("work").1["guarded.txt"],
+        digest(b"one"),
+        "nothing was published while the file could not be opened"
+    );
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|why| why.contains("cannot be opened")),
+        "{refused:?}"
+    );
+    assert!(status.is_err(), "{status:?}");
+    // Nothing was dropped: the change is committed once the file opens.
+    ws.commit(Some("two")).expect("commit 2");
+    assert_eq!(fixture.saved("work").1["guarded.txt"], digest(b"two"));
+    ws.discard().expect("discard");
     fixture.close();
 }

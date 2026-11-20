@@ -7,7 +7,7 @@ use crate::source::{attribute, Source};
 use crate::sys;
 use crate::track::local::{native, verbatim, Local};
 use crate::track::status::{self, Change, Known, Report, StatusError};
-use crate::track::watch::{self, Dirty, Pending, Position, Watch};
+use crate::track::watch::{self, Dirty, Kept, Pending, Position, Watch};
 use crate::track::Journal;
 use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
@@ -131,13 +131,17 @@ fn clear_read_only(path: &Path) -> std::io::Result<()> {
 }
 
 /// What a state directory records about its mount's place on the volume:
-/// which directory it belongs to, and the change journal position every
-/// uncommitted change lies after.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// which directory it belongs to, the change journal position every
+/// uncommitted change lies after, and the files that were open for writing
+/// at that position. A later write through such a handle adds no journal
+/// record, so the list is as much a part of "what may have changed" as the
+/// position is.
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct Anchor {
     volume: u32,
     directory: u64,
     position: Position,
+    open: Vec<u64>,
 }
 
 impl Anchor {
@@ -154,6 +158,12 @@ impl Anchor {
                 journal: field("journal")?.parse().ok()?,
                 usn: field("usn")?.parse().ok()?,
             },
+            open: field("open")
+                .unwrap_or_default()
+                .split(',')
+                .filter(|id| !id.is_empty())
+                .map(|id| id.parse().ok())
+                .collect::<Option<_>>()?,
         })
     }
 
@@ -161,11 +171,16 @@ impl Anchor {
         // Written beside and renamed in: a torn record would lose the
         // position every uncommitted change is found from.
         let (path, beside) = (state.join("anchor"), state.join("anchor.new"));
+        let open: Vec<String> = self.open.iter().map(u64::to_string).collect();
         std::fs::write(
             &beside,
             format!(
-                "volume={}\ndirectory={}\njournal={}\nusn={}\n",
-                self.volume, self.directory, self.position.journal, self.position.usn
+                "volume={}\ndirectory={}\njournal={}\nusn={}\nopen={}\n",
+                self.volume,
+                self.directory,
+                self.position.journal,
+                self.position.usn,
+                open.join(",")
             ),
         )?;
         std::fs::rename(beside, path)
@@ -208,7 +223,8 @@ impl Projection {
         let record = state.join("instance");
         std::fs::write(&record, format!("{instance:032x}\n")).map_err(io("write", &record))?;
         // Tracking starts before anything can change: at the journal's end.
-        let watch = Watch::start(root, None, []).map_err(|e| MountError::Journal(e.to_string()))?;
+        let watch = Watch::start(root, Kept::default(), [])
+            .map_err(|e| MountError::Journal(e.to_string()))?;
         let anchor = Self::anchor(root, watch.pending().1)?;
         anchor.write(state).map_err(io("write", state))?;
         Self::start(root, state, source, threads, watch, anchor)
@@ -222,15 +238,18 @@ impl Projection {
             volume: own.volume,
             directory: own.index,
             position,
+            open: Vec::new(),
         })
     }
 
     /// Serves again a root a provider stopped serving, by unmount or by
     /// dying. The items on disk stay as they are. What changed while no
     /// provider ran is read from the volume's change journal, from the
-    /// position the state directory records; when the journal no longer
-    /// reaches back that far, everything on disk is compared once. Returns
-    /// how many changed items the journal already shows.
+    /// position the state directory records; when that position is not one
+    /// the journal can be read from (its records are overwritten, it lies
+    /// after the journal's end, or the journal is another one), everything
+    /// on disk is compared once. Returns how many changed items the
+    /// journal already shows.
     pub fn resume(
         root: &Path,
         state: &Path,
@@ -245,13 +264,18 @@ impl Projection {
         Self::belongs(root, &anchor)?;
         // No provider runs yet, so the listing is exactly what is on disk.
         let known = watch::directories(root).map_err(io("list", root))?;
-        let watch = Watch::start(root, Some(anchor.position), known)
-            .map_err(|e| MountError::Journal(e.to_string()))?;
+        let kept = Kept {
+            position: Some(anchor.position),
+            open: anchor.open.clone(),
+        };
+        let watch =
+            Watch::start(root, kept, known).map_err(|e| MountError::Journal(e.to_string()))?;
         let resumed = Self::start(root, state, source, threads, watch, anchor)?;
         let (pending, _) = resumed.watch.pending();
         let found = pending.files.len()
             + pending.members.len()
             + pending.attributes.len()
+            + pending.adopted.len()
             + usize::from(pending.everything);
         Ok((resumed, found))
     }
@@ -316,21 +340,31 @@ impl Projection {
         &self.watch
     }
 
-    /// Records that everything before `position` in the change journal is
-    /// committed: a later provider starts reading there.
-    pub fn settle(&self, position: Position) -> std::io::Result<()> {
+    /// Records that everything before the kept position in the change
+    /// journal is committed: a later provider starts reading there, with
+    /// the files that were open for writing then still suspect.
+    pub fn settle(&self, kept: &Kept) -> std::io::Result<()> {
         let mut anchor = self
             .anchor
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        anchor.position = position;
+        if let Some(position) = kept.position {
+            anchor.position = position;
+        }
+        anchor.open.clone_from(&kept.open);
         anchor.write(&self.state)
     }
 
     /// The paths and listings to compare for `pending`. When the journal
     /// could not answer, that is everything on disk: every directory's
-    /// names, every placeholder whose read-only bit differs from the
-    /// base's, and every full file `known` does not vouch for.
+    /// names, every placeholder whose facts differ from the base's, and
+    /// every full file `known` does not vouch for. `known` is not asked
+    /// when the journal its answers rest on is not the one read now.
+    ///
+    /// A placeholder's bytes are the base's for the path it was made at. A
+    /// placeholder renamed over another name still has the size and time of
+    /// the file it was made for, which is how it is told here; two files of
+    /// one size and one time cannot be told apart this way.
     pub fn dirty(&self, pending: &Pending, known: Known<'_>) -> Result<Dirty, StatusError> {
         let mut dirty = self.watch.examine(&self.root, pending)?;
         if !pending.everything {
@@ -359,17 +393,25 @@ impl Projection {
                         .state(&path)?
                         .is_none_or(|bits| bits & sys::state::FULL != 0)
                     {
-                        if !known(&path, &item) {
-                            dirty.paths.insert(path);
+                        if pending.unvouched || !known(&path, &item) {
+                            dirty.sure.insert(path);
                         }
-                    } else if base
-                        .as_ref()
-                        .and_then(|base| base.find(&item.name))
-                        .is_none_or(|entry| {
-                            (entry.attributes ^ item.attributes) & attribute::READ_ONLY != 0
-                        })
-                    {
-                        dirty.paths.insert(path);
+                    } else {
+                        match base.as_ref().and_then(|base| base.find(&item.name)) {
+                            Some(entry)
+                                if (entry.size, entry.written) == (item.size, item.written) =>
+                            {
+                                if (entry.attributes ^ item.attributes) & attribute::READ_ONLY != 0
+                                {
+                                    dirty.paths.insert(path);
+                                }
+                            }
+                            // Made for another path, or for a base that is
+                            // not this one.
+                            _ => {
+                                dirty.sure.insert(path);
+                            }
+                        }
                     }
                 }
             }
@@ -418,10 +460,11 @@ impl Projection {
     /// uncommitted change is gone.
     pub fn discard(mut self) -> Result<(), MountError> {
         // Nothing is removed from a directory the state does not belong to.
-        let anchor = *self
+        let anchor = self
             .anchor
             .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clone();
         Self::belongs(&self.root, &anchor)?;
         self.watch.stop();
         // Once no provider runs, some items cannot be deleted (a placeholder

@@ -1,5 +1,5 @@
-//! The record of committed files: what each full file on disk, and each
-//! tombstone, was last committed as.
+//! The record of committed files: what each full file on disk was last
+//! committed as.
 //!
 //! A file this Workspace wrote stays an ordinary full file on disk after
 //! its Commit, and ProjFS can say nothing more about it than "full". Without
@@ -14,16 +14,16 @@
 //! leaves size and time alone.
 //!
 //! The record is asked only where the change journal cannot answer for a
-//! stretch of time, and when a merge has to decide whether a committed
-//! file may be replaced. A file the journal marks is always compared.
+//! stretch of time, and when a merge has to decide whether a full file
+//! still holds what this Workspace captured. A file the journal marks is
+//! always compared. An answer of "no" never means "changed" or "not
+//! committed": it means "compare the bytes".
 //!
-//! A tombstone is recorded only when it could not be cleared after its
-//! deletion was committed, so that it is cleared when the name comes back.
-//!
-//! Local, disposable state: without it every full file is compared by its
-//! bytes once.
+//! Local, disposable state: without it, or without a file's entry, the
+//! file's bytes are compared where the record would have answered, and the
+//! comparison enters the file again.
 use crate::track::local::LocalItem;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// One full file as its last Commit stored it.
@@ -41,7 +41,6 @@ pub struct Stored {
 pub struct Ledger {
     /// By the path as NTFS compares it, with the path as spelled.
     files: BTreeMap<String, (String, Stored)>,
-    tombstones: BTreeSet<String>,
 }
 
 fn folded(path: &str) -> String {
@@ -68,23 +67,17 @@ impl Ledger {
         };
         for line in text.lines() {
             let fields: Vec<&str> = line.splitn(5, '\t').collect();
-            match fields.as_slice() {
-                ["F", size, written, change, path] => {
-                    let stored = (|| {
-                        Some(Stored {
-                            size: size.parse().ok()?,
-                            written: written.parse().ok()?,
-                            change: change.parse().ok()?,
-                        })
-                    })();
-                    if let Some(stored) = stored {
-                        ledger.record(path, stored);
-                    }
+            if let ["F", size, written, change, path] = fields.as_slice() {
+                let stored = (|| {
+                    Some(Stored {
+                        size: size.parse().ok()?,
+                        written: written.parse().ok()?,
+                        change: change.parse().ok()?,
+                    })
+                })();
+                if let Some(stored) = stored {
+                    ledger.record(path, stored);
                 }
-                ["T", path] => {
-                    ledger.tombstones.insert((*path).to_owned());
-                }
-                _ => {}
             }
         }
         ledger
@@ -98,9 +91,6 @@ impl Ledger {
                 "F\t{}\t{}\t{}\t{path}\n",
                 stored.size, stored.written, stored.change
             ));
-        }
-        for path in &self.tombstones {
-            text.push_str(&format!("T\t{path}\n"));
         }
         let (path, beside) = (state.join("committed"), state.join("committed.new"));
         std::fs::write(&beside, text)?;
@@ -141,21 +131,10 @@ impl Ledger {
         }
     }
 
-    /// The recorded files, each with its path as spelled.
-    pub fn files(&self) -> Vec<(String, Stored)> {
-        self.files.values().cloned().collect()
-    }
-
-    /// Remembers a committed deletion whose tombstone is still on disk.
-    pub fn tombstone(&mut self, path: &str) {
-        self.tombstones.insert(path.to_owned());
-    }
-
-    pub fn cleared(&mut self, path: &str) {
-        self.tombstones.remove(path);
-    }
-
-    pub fn tombstones(&self) -> Vec<String> {
-        self.tombstones.iter().cloned().collect()
+    /// Keeps only the entries `other` holds the same: what was tried on a
+    /// copy and did not come out as it went in is no longer vouched for.
+    pub fn keep_same(&mut self, other: &Self) {
+        self.files
+            .retain(|key, held| other.files.get(key) == Some(held));
     }
 }

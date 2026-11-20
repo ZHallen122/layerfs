@@ -58,6 +58,8 @@ pub struct Captured {
     /// Their bytes did not change during the read; they are compared again
     /// at the next Commit.
     pub live: Vec<String>,
+    /// The same files by their identity on the volume, for the tracker.
+    pub held: Vec<u64>,
     /// Full files whose bytes the view now holds, as they were when read.
     pub files: Vec<Seen>,
     /// Paths removed from the view: deleted, or renamed away.
@@ -221,6 +223,10 @@ struct Capture<'a, 'w> {
     /// item marked both by its own change and by its directory's is
     /// looked at once.
     visited: std::collections::BTreeSet<String>,
+    /// Paths whose bytes are compared whatever ProjFS says of the file.
+    sure: &'a std::collections::BTreeSet<String>,
+    /// Directories already compared whole.
+    walked: std::collections::BTreeSet<String>,
     done: Captured,
     refused: Vec<(String, String)>,
 }
@@ -249,19 +255,29 @@ impl Capture<'_, '_> {
     /// Replays a rename in the view when the disk shows it happened, so the
     /// entry keeps its identity instead of becoming a delete and an add.
     fn rename(&mut self, rename: &Rename) -> Result<(), CaptureError> {
-        let Some((to, _)) = self.local.find(&rename.to)? else {
+        let Some((to, arrived)) = self.local.find(&rename.to)? else {
             return Ok(());
         };
         if self.local.find(&rename.from)?.is_some() || !self.representable(&to) {
             return Ok(());
         }
-        let Some((from, _)) = view_find(&self.mutation, &rename.from)? else {
+        let Some((from, moved)) = view_find(&self.mutation, &rename.from)? else {
             return Ok(());
         };
+        if arrived.link() || arrived.directory != (moved.kind == InodeKind::Directory) {
+            return Ok(());
+        }
         match view_find(&self.mutation, &to)? {
             // Only the spelling's case changed: the view finds the old name.
             Some((existing, _)) if existing == from => {}
-            Some(_) => return Ok(()),
+            // The name held another item, which the renamed one replaced.
+            // What is there now is compared with the view afterwards, as
+            // every item that arrived at a name is.
+            Some((existing, _)) => {
+                self.mutation.remove(&absolute(&existing))?;
+                self.done.applied += 1;
+                self.done.removed.push(existing);
+            }
             None => {}
         }
         if from == to {
@@ -316,13 +332,23 @@ impl Capture<'_, '_> {
         }
         // The first name's bytes reach the view before the second is bound.
         if let Some((_, item)) = self.local.find(&path)? {
-            self.item(&path, &item)?;
+            self.item(&path, &item, true)?;
         }
         let Some((_, target)) = view_find(&self.mutation, &path)? else {
             return Ok(());
         };
-        if target.kind != InodeKind::RegularFile || view_find(&self.mutation, &link)?.is_some() {
+        if target.kind != InodeKind::RegularFile {
             return Ok(());
+        }
+        match view_find(&self.mutation, &link)? {
+            Some((_, held)) if held.serial == target.serial => return Ok(()),
+            // The name held another file, which the link replaced.
+            Some((existing, _)) => {
+                self.mutation.remove(&absolute(&existing))?;
+                self.done.applied += 1;
+                self.done.removed.push(existing);
+            }
+            None => {}
         }
         self.ensure_parent(&link)?;
         let (parent, name) = self.mutation.parent(&absolute(&link))?;
@@ -335,9 +361,43 @@ impl Capture<'_, '_> {
         Ok(())
     }
 
+    /// Compares a directory that arrived at its name with the view: every
+    /// name in it, and every file below it by its bytes.
+    fn tree(&mut self, directory: &str) -> Result<(), CaptureError> {
+        let mut walk = vec![directory.to_owned()];
+        while let Some(at) = walk.pop() {
+            let Some((spelled, item)) = self.local.find(&at)? else {
+                self.path(&at)?;
+                continue;
+            };
+            if !item.directory || item.link() {
+                self.item(&spelled, &item, true)?;
+                continue;
+            }
+            if !self.walked.insert(spelled.to_lowercase()) {
+                continue;
+            }
+            // The directory itself; new to the view, it arrives with all
+            // it holds.
+            self.item(&spelled, &item, true)?;
+            let children = self.local.list(&spelled)?.unwrap_or_default();
+            for child in &children {
+                let below = join(&spelled, &child.name);
+                if child.directory && !child.link() {
+                    walk.push(below);
+                } else {
+                    self.item(&below, child, true)?;
+                }
+            }
+            let listed: Vec<String> = children.into_iter().map(|child| child.name).collect();
+            self.members(&spelled, &listed)?;
+        }
+        Ok(())
+    }
+
     fn path(&mut self, typed: &str) -> Result<(), CaptureError> {
         match self.local.find(typed)? {
-            Some((path, item)) => self.item(&path, &item),
+            Some((path, item)) => self.item(&path, &item, false),
             None => {
                 if let Some((gone, _)) = view_find(&self.mutation, typed)? {
                     self.mutation.remove(&absolute(&gone))?;
@@ -349,10 +409,14 @@ impl Capture<'_, '_> {
         }
     }
 
-    fn item(&mut self, path: &str, item: &LocalItem) -> Result<(), CaptureError> {
+    /// Makes the view hold what the disk holds at `path`. With `sure`, or
+    /// when the change journal marked the file's bytes, a file is compared
+    /// by its bytes whatever ProjFS says of it.
+    fn item(&mut self, path: &str, item: &LocalItem, sure: bool) -> Result<(), CaptureError> {
         if !self.visited.insert(path.to_lowercase()) {
             return Ok(());
         }
+        let sure = sure || self.sure.contains(path);
         if item.link() {
             // A junction or symbolic link is never followed and never
             // stored: it is named, and what the view held there is gone.
@@ -384,14 +448,14 @@ impl Capture<'_, '_> {
             }
         }
         if !item.directory {
-            return self.file(path, item, existing);
+            return self.file(path, item, existing, sure);
         }
         if existing.is_none() {
             self.mutation.mkdir(&absolute(path), None)?;
             self.done.applied += 1;
             // A directory new to the view arrives with everything in it.
             for child in self.local.list(path)?.unwrap_or_default() {
-                self.item(&join(path, &child.name), &child)?;
+                self.item(&join(path, &child.name), &child, sure)?;
             }
         }
         Ok(())
@@ -402,6 +466,7 @@ impl Capture<'_, '_> {
         path: &str,
         item: &LocalItem,
         existing: Option<ViewStat>,
+        sure: bool,
     ) -> Result<(), CaptureError> {
         let read_only = item.attributes & attribute::READ_ONLY != 0;
         let wanted = |mode: u32| match (read_only, mode & 0o222 == 0) {
@@ -409,12 +474,14 @@ impl Capture<'_, '_> {
             (false, true) => mode | 0o200,
             _ => mode,
         };
-        // A placeholder, hydrated or not, holds the base's bytes: only a
-        // full file's bytes can differ from the view.
-        let full = self
-            .local
-            .state(path)?
-            .is_none_or(|bits| bits & sys::state::FULL != 0);
+        // A placeholder, hydrated or not, holds the base's bytes for the
+        // path it was made at: where nothing says it moved, only a full
+        // file's bytes can differ from the view.
+        let full = sure
+            || self
+                .local
+                .state(path)?
+                .is_none_or(|bits| bits & sys::state::FULL != 0);
         let (serial, mode, changed) = match existing {
             Some(stat) => {
                 let changed = match full
@@ -541,6 +608,7 @@ impl Capture<'_, '_> {
                 return Err(CaptureError::Unstable(path.to_owned()));
             }
             self.done.live.push(path.to_owned());
+            self.done.held.push(sys::identity(&file)?.index);
         } else if let Ok(change) = change {
             self.done.files.push(Seen {
                 path: path.to_owned(),
@@ -555,9 +623,10 @@ impl Capture<'_, '_> {
 
 /// Applies every change to the bound Workspace's view: the renames and
 /// links ProjFS reported first, so an item keeps its identity, then every
-/// item `dirty` marks, compared between the disk and the view. On an error
-/// nothing is published; an uncertain engine outcome keeps the Workspace's
-/// custody untouched.
+/// item `dirty` marks, compared between the disk and the view. Items that
+/// arrived at a name come before the rest: they are compared by content,
+/// and an item is looked at once. On an error nothing is published; an
+/// uncertain engine outcome keeps the Workspace's custody untouched.
 pub fn capture(
     bound: &BoundWorkspace,
     provider: &Provider,
@@ -571,6 +640,8 @@ pub fn capture(
         local: Local::new(root),
         root,
         visited: std::collections::BTreeSet::new(),
+        walked: std::collections::BTreeSet::new(),
+        sure: &dirty.sure,
         done: Captured::default(),
         refused: Vec::new(),
     };
@@ -580,6 +651,12 @@ pub fn capture(
         }
         for link in &recorded.links {
             capture.link(&link.path, &link.link)?;
+        }
+        for directory in &dirty.trees {
+            capture.tree(directory)?;
+        }
+        for typed in &dirty.sure {
+            capture.path(typed)?;
         }
         for (directory, listed) in &dirty.listings {
             capture.members(directory, listed)?;

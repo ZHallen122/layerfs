@@ -42,7 +42,9 @@ fn powershell(script: &str) -> std::process::Child {
         .expect("powershell")
 }
 
-fn outcome(result: &Result<layerfs_projfs::workspace::Committed, layerfs_projfs::workspace::CommitRefusal>) -> String {
+fn outcome(
+    result: &Result<layerfs_projfs::workspace::Committed, layerfs_projfs::workspace::CommitRefusal>,
+) -> String {
     match result {
         Ok(done) => format!("{:?} warnings {:?}", done.outcome, done.warnings),
         Err(refusal) => refusal.to_string(),
@@ -111,12 +113,20 @@ fn swap_setup(label: &str) -> (Fixture, Workspace) {
     (fixture, ws)
 }
 
-fn compare(fixture: &Fixture, ws: &Workspace, what: &str, prefix: &str) -> (Vec<String>, Vec<String>, bool) {
+fn compare(
+    fixture: &Fixture,
+    ws: &Workspace,
+    what: &str,
+    prefix: &str,
+) -> (Vec<String>, Vec<String>, bool) {
     let root = ws.root().to_owned();
     let (saved_shape, saved_digests) = fixture.saved("work");
     let (disk_shape, disk_digests) = (shape(&root), tree_digests(&root));
     let only = |map: &std::collections::BTreeMap<String, (bool, u64)>| -> Vec<String> {
-        map.keys().filter(|k| k.starts_with(prefix)).cloned().collect()
+        map.keys()
+            .filter(|k| k.starts_with(prefix))
+            .cloned()
+            .collect()
     };
     let same_bytes = disk_digests
         .iter()
@@ -192,16 +202,25 @@ fn s3_a_directory_moved_in_from_outside_over_an_existing_name_reaches_the_commit
     // A later change below the directory that arrived: is it tracked?
     ops::run(
         fixture.home.path(),
-        &[Op::Write(at(&root, "docs/sub/deep.txt"), b"deeper".to_vec())],
+        &[Op::Write(
+            at(&root, "docs/sub/deep.txt"),
+            b"deeper".to_vec(),
+        )],
     );
     let later = ws.commit(Some("later"));
     let tracked = fixture.saved("work").1.get("docs/sub/deep.txt") == Some(&digest(b"deeper"));
-    eprintln!("S3 later commit: {}; later change committed: {tracked}", outcome(&later));
+    eprintln!(
+        "S3 later commit: {}; later change committed: {tracked}",
+        outcome(&later)
+    );
     ws.discard().expect("discard");
     fixture.close();
     assert_eq!(stored, disk, "names below docs");
     assert!(same, "bytes below docs");
-    assert!(tracked, "a change below the moved-in directory was not committed");
+    assert!(
+        tracked,
+        "a change below the moved-in directory was not committed"
+    );
 }
 
 const B2: &[u8] = b"# theirs\n";
@@ -315,7 +334,10 @@ fn s6_without_the_record_a_committed_file_still_follows_a_merge() {
     let (a_root, a_state) = (a.root().to_owned(), a.state().to_owned());
     ops::run(
         fixture.home.path(),
-        &[Op::Write(at(&a_root, "src/main.rs"), b"fn main() { a1(); }\n".to_vec())],
+        &[Op::Write(
+            at(&a_root, "src/main.rs"),
+            b"fn main() { a1(); }\n".to_vec(),
+        )],
     );
     a.commit(Some("a1")).expect("a1");
     a.unmount().expect("unmount");
@@ -328,7 +350,10 @@ fn s6_without_the_record_a_committed_file_still_follows_a_merge() {
     let b = fixture.mount("b");
     ops::run(
         fixture.home.path(),
-        &[Op::Write(at(b.root(), "src/main.rs"), b"fn main() { b2(); }\n".to_vec())],
+        &[Op::Write(
+            at(b.root(), "src/main.rs"),
+            b"fn main() { b2(); }\n".to_vec(),
+        )],
     );
     b.commit(Some("b2")).expect("b2");
     ops::run(
@@ -361,7 +386,10 @@ fn s7_two_edits_of_one_file_in_different_places() {
     let base = lines.concat();
     ops::run(
         fixture.home.path(),
-        &[Op::Write(a.root().join("notes.txt"), base.clone().into_bytes())],
+        &[Op::Write(
+            a.root().join("notes.txt"),
+            base.clone().into_bytes(),
+        )],
     );
     a.commit(Some("base")).expect("base");
     let b = fixture.mount("b");
@@ -437,7 +465,10 @@ fn s8_a_recorded_position_after_the_journals_end_is_not_trusted() {
     // A change while no provider runs: a full file can be rewritten.
     let down = ops::attempt(
         fixture.home.path(),
-        &[Op::Write(root.join("kept.txt"), b"changed while down".to_vec())],
+        &[Op::Write(
+            root.join("kept.txt"),
+            b"changed while down".to_vec(),
+        )],
     );
     eprintln!("S8 rewrite of a full file while no provider runs: {down:?}");
     let (ws, found) = Workspace::resume(&fixture.engine, &root, None, 0).expect("resume");
@@ -469,7 +500,10 @@ fn s8_a_recorded_position_after_the_journals_end_is_not_trusted() {
         && saved_shape.contains_key("after.txt");
     ws.discard().expect("discard");
     fixture.close();
-    assert!(ok, "changes were missed after a journal position that lies in the future");
+    assert!(
+        ok,
+        "changes were missed after a journal position that lies in the future"
+    );
 }
 
 /// S9. The recorded position lies before the journal's oldest record (the

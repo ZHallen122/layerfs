@@ -18,8 +18,9 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::path::{Path, PathBuf};
 use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Storage::FileSystem::{
-    FileIdType, GetFinalPathNameByHandleW, OpenFileById, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_DESCRIPTOR, FILE_ID_DESCRIPTOR_0,
+    FileIdType, FindClose, FindFirstFileNameW, FindNextFileNameW, GetFinalPathNameByHandleW,
+    OpenFileById, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_DESCRIPTOR,
+    FILE_ID_DESCRIPTOR_0,
 };
 use windows_sys::Win32::System::Ioctl::{
     FSCTL_QUERY_USN_JOURNAL, FSCTL_READ_FILE_USN_DATA, FSCTL_READ_UNPRIVILEGED_USN_JOURNAL,
@@ -102,8 +103,9 @@ impl std::fmt::Display for JournalError {
 
 const INVALID_FUNCTION: i32 = 1;
 const FILE_NOT_FOUND: i32 = 2;
-const ACCESS_DENIED: i32 = 5;
+const HANDLE_EOF: i32 = 38;
 const INVALID_PARAMETER: i32 = 87;
+const MORE_DATA: i32 = 234;
 const JOURNAL_DELETE_IN_PROGRESS: i32 = 1178;
 const JOURNAL_NOT_ACTIVE: i32 = 1179;
 const JOURNAL_ENTRY_DELETED: i32 = 1181;
@@ -163,6 +165,8 @@ const SYNCHRONIZE: u32 = 0x0010_0000;
 const FILE_LIST_DIRECTORY: u32 = 0x1;
 const FILE_TRAVERSE: u32 = 0x20;
 const FILE_READ_ATTRIBUTES: u32 = 0x80;
+/// `GetFinalPathNameByHandleW`: the path without its volume.
+const VOLUME_NAME_NONE: u32 = 0x4;
 const SHARE_ALL: u32 = 7;
 
 impl Volume {
@@ -291,10 +295,11 @@ impl Volume {
         }
     }
 
-    /// The path of the file with this identity now, spelled as the volume
-    /// holds it (`\\?\C:\...`); `None` when no such file can be opened. A
-    /// reparse point is opened itself, never followed.
-    pub fn path(&self, id: u64) -> std::io::Result<Option<PathBuf>> {
+    /// Opens the file with this identity; `None` when the volume has no such
+    /// file. A reparse point is opened itself, never followed. A file that
+    /// exists and may not be opened is an error, not an absent file: the
+    /// caller cannot tell what became of it.
+    fn open_by_identity(&self, id: u64) -> std::io::Result<Option<std::fs::File>> {
         let descriptor = FILE_ID_DESCRIPTOR {
             dwSize: std::mem::size_of::<FILE_ID_DESCRIPTOR>() as u32,
             Type: FileIdType,
@@ -314,12 +319,20 @@ impl Volume {
         if handle == INVALID_HANDLE_VALUE {
             let error = std::io::Error::last_os_error();
             return match error.raw_os_error() {
-                Some(FILE_NOT_FOUND | ACCESS_DENIED | INVALID_PARAMETER) => Ok(None),
+                Some(FILE_NOT_FOUND | INVALID_PARAMETER) => Ok(None),
                 _ => Err(error),
             };
         }
         // SAFETY: the handle was just opened and is owned from here.
-        let file = unsafe { std::fs::File::from_raw_handle(handle.cast()) };
+        Ok(Some(unsafe {
+            std::fs::File::from_raw_handle(handle.cast())
+        }))
+    }
+
+    /// The path `file` was opened at, as the volume spells it; `None` when
+    /// the file was deleted since. `flags` chooses the form of the volume's
+    /// name: 0 for `\\?\C:\...`, [`VOLUME_NAME_NONE`] for none.
+    fn spelled(file: &std::fs::File, flags: u32) -> Option<Vec<u16>> {
         let mut wide = vec![0u16; 512];
         loop {
             // SAFETY: the handle is open and `wide` is writable for its length.
@@ -328,18 +341,102 @@ impl Volume {
                     file.as_raw_handle() as HANDLE,
                     wide.as_mut_ptr(),
                     wide.len() as u32,
-                    0,
+                    flags,
                 )
             } as usize;
             if length == 0 {
-                // Deleted between the open and the question.
-                return Ok(None);
+                return None;
             }
             if length < wide.len() {
                 wide.truncate(length);
-                return Ok(Some(PathBuf::from(std::ffi::OsString::from_wide(&wide))));
+                return Some(wide);
             }
             wide.resize(length + 1, 0);
         }
+    }
+
+    /// The path of the file with this identity now, spelled as the volume
+    /// holds it (`\\?\C:\...`); `None` when the volume has no such file.
+    pub fn path(&self, id: u64) -> std::io::Result<Option<PathBuf>> {
+        let Some(file) = self.open_by_identity(id)? else {
+            return Ok(None);
+        };
+        Ok(Self::spelled(&file, 0).map(|wide| PathBuf::from(std::ffi::OsString::from_wide(&wide))))
+    }
+
+    /// Every path of the file with this identity now: one, or one for each
+    /// of its hard links. Empty when the volume has no such file.
+    pub fn paths(&self, id: u64) -> std::io::Result<Vec<PathBuf>> {
+        let Some(file) = self.open_by_identity(id)? else {
+            return Ok(Vec::new());
+        };
+        let Some(full) = Self::spelled(&file, 0) else {
+            return Ok(Vec::new());
+        };
+        let own = PathBuf::from(std::ffi::OsString::from_wide(&full));
+        let identity = crate::sys::identity(&file)?;
+        if identity.links < 2 || identity.attributes & attribute::DIRECTORY != 0 {
+            return Ok(vec![own]);
+        }
+        // The other names are told without the volume: what precedes this
+        // name's own volume-less form is the volume.
+        let Some(bare) = Self::spelled(&file, VOLUME_NAME_NONE) else {
+            return Ok(Vec::new());
+        };
+        let volume = &full[..full.len().saturating_sub(bare.len())];
+        let mut name = full.clone();
+        name.push(0);
+        let mut found = Vec::new();
+        let mut link = vec![0u16; 512];
+        let mut length = link.len() as u32;
+        // SAFETY: `name` ends in NUL; `link` is writable for `length` units.
+        let mut search =
+            unsafe { FindFirstFileNameW(name.as_ptr(), 0, &mut length, link.as_mut_ptr()) };
+        while search == INVALID_HANDLE_VALUE {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(MORE_DATA) {
+                // Renamed or removed since it was opened: its own name stands.
+                return Ok(vec![own]);
+            }
+            link.resize(length as usize + 1, 0);
+            length = link.len() as u32;
+            // SAFETY: as above, with the larger buffer.
+            search =
+                unsafe { FindFirstFileNameW(name.as_ptr(), 0, &mut length, link.as_mut_ptr()) };
+        }
+        loop {
+            let units = (length as usize).min(link.len());
+            let text = &link[..units];
+            let text = &text[..text.iter().position(|unit| *unit == 0).unwrap_or(units)];
+            let mut whole = volume.to_vec();
+            whole.extend_from_slice(text);
+            found.push(PathBuf::from(std::ffi::OsString::from_wide(&whole)));
+            length = link.len() as u32;
+            // SAFETY: `search` is open; `link` is writable for `length` units.
+            if unsafe { FindNextFileNameW(search, &mut length, link.as_mut_ptr()) } != 0 {
+                continue;
+            }
+            let error = std::io::Error::last_os_error();
+            match error.raw_os_error() {
+                Some(MORE_DATA) => {
+                    link.resize(length as usize + 1, 0);
+                    length = link.len() as u32;
+                    // SAFETY: as above; the same name is asked for again.
+                    if unsafe { FindNextFileNameW(search, &mut length, link.as_mut_ptr()) } != 0 {
+                        continue;
+                    }
+                    break;
+                }
+                Some(HANDLE_EOF) => break,
+                _ => {
+                    // SAFETY: `search` is open and closed once.
+                    unsafe { FindClose(search) };
+                    return Err(error);
+                }
+            }
+        }
+        // SAFETY: `search` is open and closed once.
+        unsafe { FindClose(search) };
+        Ok(found)
     }
 }

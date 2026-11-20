@@ -119,6 +119,15 @@ pub struct Workspace {
     /// The recorded base Commit and the Branch's present head, when a
     /// restart found them different.
     pub(super) diverged: Option<(String, String)>,
+    /// Set when the directory could not follow a base the engine
+    /// installed: Commit is refused until a resume finished the step.
+    pub(super) behind: Mutex<Option<String>>,
+}
+
+fn root_of(text: &str, what: &str) -> Result<ObjectId, WorkspaceError> {
+    unhex(text)
+        .and_then(|bytes| ObjectId::from_bytes(&bytes).ok())
+        .ok_or_else(|| WorkspaceError::Failed(format!("recorded {what}")))
 }
 
 impl Workspace {
@@ -172,8 +181,45 @@ impl Workspace {
         let workspace = Self::start(engine, stack, &branch, Some(&record), |source| {
             Ok(Projection::resume(root, &state, source, threads)?.0)
         })?;
-        let found = workspace.status()?.changes.len();
-        Ok((workspace, found))
+        match workspace.finish(&record).and_then(|()| workspace.status()) {
+            Ok(status) => Ok((workspace, status.changes.len())),
+            // Not served half-followed: the directory and the state stay
+            // as they are for another attempt.
+            Err(error) => Err(match workspace.unmount() {
+                Ok(()) => error,
+                Err(release) => WorkspaceError::Failed(format!("{error}; then {release}")),
+            }),
+        }
+    }
+
+    /// Finishes a step an earlier provider recorded and did not complete:
+    /// bringing the directory from the tree it showed to the tree a merge
+    /// installed.
+    fn finish(&self, record: &Record) -> Result<(), WorkspaceError> {
+        if record.shown.is_empty() {
+            return Ok(());
+        }
+        let (shown, target) = (
+            root_of(&record.shown, "shown root")?,
+            root_of(&record.target, "target root")?,
+        );
+        let mut ledger = self
+            .ledger
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        self.follow(shown, target, &mut ledger)?;
+        // Kept as recorded but for the step: after a restart that found the
+        // Branch moved, the record is not this binding's to rewrite.
+        Record {
+            shown: String::new(),
+            target: String::new(),
+            ..record.clone()
+        }
+        .write(self.projection.state())
+        .map_err(WorkspaceError::Failed)?;
+        // Best effort: an entry that is missing is a comparison later.
+        let _ = ledger.save(self.projection.state());
+        Ok(())
     }
 
     fn start(
@@ -198,9 +244,7 @@ impl Workspace {
             if let Some(record) = resumed.filter(|record| record.head != head) {
                 // The directory was projected from the recorded base and
                 // keeps showing it.
-                root = unhex(&record.root)
-                    .and_then(|bytes| ObjectId::from_bytes(&bytes).ok())
-                    .ok_or_else(|| WorkspaceError::Failed("recorded base root".to_owned()))?;
+                root = root_of(&record.root, "base root")?;
                 diverged = Some((record.head.clone(), head));
             }
             let source = SnapshotSource::open(engine.store(), snapshot.scope, root)
@@ -230,11 +274,28 @@ impl Workspace {
             committing: Mutex::new(()),
             ledger: Mutex::new(ledger),
             diverged,
+            behind: Mutex::new(None),
         };
-        if workspace.diverged.is_none() {
-            workspace.write_record()?;
+        // A resumed Workspace's record is rewritten once its unfinished
+        // step, if it has one, is done.
+        if resumed.is_none() {
+            workspace.write_record(None)?;
         }
         Ok(workspace)
+    }
+
+    pub(super) fn behind(&self) -> Option<String> {
+        self.behind
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clone()
+    }
+
+    pub(super) fn fall_behind(&self, why: &str) {
+        *self
+            .behind
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(why.to_owned());
     }
 
     /// The mounted directory.
@@ -250,11 +311,20 @@ impl Workspace {
         &self.projection
     }
 
-    pub(super) fn write_record(&self) -> Result<(), WorkspaceError> {
+    /// Records the base the binding has now. `following` is the step in
+    /// progress, when there is one: the tree the directory shows, and the
+    /// tree it is being brought to.
+    pub(super) fn write_record(
+        &self,
+        following: Option<(ObjectId, ObjectId)>,
+    ) -> Result<(), WorkspaceError> {
         let snapshot = self
             .bound
             .snapshot()
             .map_err(|e| WorkspaceError::Failed(format!("binding: {e}")))?;
+        let (shown, target) = following
+            .map(|(shown, target)| (hex(shown.as_bytes()), hex(target.as_bytes())))
+            .unwrap_or_default();
         Record {
             project: self.stack.name.as_str().to_owned(),
             branch: self.branch.clone(),
@@ -264,6 +334,8 @@ impl Workspace {
                 .head_commit
                 .map(|id| hex(id.as_slice()))
                 .unwrap_or_default(),
+            shown,
+            target,
         }
         .write(self.projection.state())
         .map_err(WorkspaceError::Failed)

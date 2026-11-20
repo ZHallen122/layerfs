@@ -7,19 +7,28 @@
 //! through a handle that is still open is in it.
 //!
 //! The records carry no names (an unprivileged read omits them), only
-//! identities. A changed file is found again by its identity; a directory
-//! in which a name appeared or disappeared is listed and compared. Records
-//! are told apart by the attributes NTFS holds:
+//! identities. A changed file is found again by its identity, at every name
+//! it has; a directory in which a name appeared or disappeared is listed and
+//! compared. Records are told apart by the attributes NTFS holds:
 //!
 //! - a reparse point that is hidden and system is a tombstone, ProjFS's
 //!   marker for a deleted or renamed-away name: its directory lost a name;
 //! - any other reparse point is a placeholder, whose bytes are the base's
-//!   by construction: only a change of its read-only bit matters;
+//!   for the path it was made at: a change of its read-only bit matters,
+//!   and so does a new name, under which its bytes are another path's;
 //! - everything else is an ordinary file or directory.
 //!
+//! One rule decides what is compared: an item that arrived at a name may
+//! have taken the place of another item the Store holds under that name. So
+//! a file that was renamed or linked is compared by its bytes, whatever
+//! ProjFS says about it, and a directory that was created, renamed or moved
+//! in is compared whole, child by child.
+//!
 //! A file that changed through a handle not yet closed stays suspect at
-//! every Commit until the journal shows the close: later writes through the
-//! same handle add no record.
+//! every Commit until the journal shows the close, or a Commit reads it and
+//! finds no writer: later writes through the same handle add no record.
+//! That list is handed out with the journal position it belongs to, so that
+//! it can be kept across a restart.
 use crate::ntfs::{attribute, reason, JournalError, Record, Volume};
 use crate::track::local::native;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -37,18 +46,23 @@ pub struct Position {
 /// What changed below the root, as identities on the volume.
 #[derive(Clone, Debug, Default)]
 pub struct Pending {
-    /// Ordinary files whose bytes, attributes or name changed.
+    /// Files whose bytes, attributes or names changed: compared by their
+    /// bytes at every name they have.
     pub files: BTreeSet<u64>,
     /// Directories in which a name appeared or disappeared.
     pub members: BTreeSet<u64>,
     /// Placeholders whose read-only attribute changed.
     pub attributes: BTreeSet<u64>,
-    /// Directories that arrived whole, with content the journal did not
-    /// attribute to the root.
+    /// Directories that arrived at their name (created, renamed or moved
+    /// in): compared whole.
     pub adopted: BTreeSet<u64>,
     /// The journal could not answer for some of the time: everything on
     /// disk is suspect.
     pub everything: bool,
+    /// The journal is not the one the recorded position was taken from, or
+    /// the position is not one of its records: nothing recorded against it
+    /// can vouch for a file either.
+    pub unvouched: bool,
 }
 
 impl Pending {
@@ -66,19 +80,42 @@ impl Pending {
         self.attributes.extend(other.attributes);
         self.adopted.extend(other.adopted);
         self.everything |= other.everything;
+        self.unvouched |= other.unvouched;
     }
 }
 
-/// The changed items as paths: what a status or capture compares.
+/// The changed items as paths: what a status or capture compares. Paths are
+/// relative to the root and `/`-separated, as the disk spells them now.
 #[derive(Clone, Debug, Default)]
 pub struct Dirty {
-    /// Paths to compare, relative to the root and `/`-separated, as the
-    /// disk spells them now.
+    /// Paths to compare. A placeholder among them is taken to hold the
+    /// base's bytes.
     pub paths: BTreeSet<String>,
+    /// Paths whose bytes are compared whatever ProjFS says of the file.
+    pub sure: BTreeSet<String>,
+    /// Directories to compare whole: every name and every file below.
+    pub trees: BTreeSet<String>,
     /// Directories whose names changed, each with the names a listing of it
     /// shows now. A name the base holds and the listing lacks was deleted
     /// or renamed away; a name the listing has and the base lacks is new.
     pub listings: BTreeMap<String, Vec<String>>,
+}
+
+/// What [`Watch::take`] handed out: everything pending before `position`.
+#[derive(Clone, Debug)]
+pub struct Taken {
+    pub pending: Pending,
+    pub position: Position,
+    /// The files open for writing at `position`, each with the mark it had.
+    open: Vec<(u64, u64)>,
+}
+
+/// What a state directory keeps of a tracker between two providers.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Kept {
+    pub position: Option<Position>,
+    /// Files that were open for writing at the position.
+    pub open: Vec<u64>,
 }
 
 struct State {
@@ -88,9 +125,19 @@ struct State {
     directories: HashSet<u64>,
     /// The read-only bit each placeholder was created with.
     read_only: HashMap<u64, bool>,
-    /// Files changed through a handle the journal has not shown closed.
-    open: HashSet<u64>,
+    /// Files changed through a handle the journal has not shown closed, or
+    /// that a capture found held open for writing. The value changes each
+    /// time the file is entered again.
+    open: HashMap<u64, u64>,
+    marks: u64,
     pending: Pending,
+}
+
+impl State {
+    fn opened(&mut self, id: u64) {
+        self.marks += 1;
+        self.open.insert(id, self.marks);
+    }
 }
 
 /// The tracker of one mount.
@@ -102,87 +149,18 @@ pub struct Watch {
     stopped: AtomicBool,
 }
 
-fn ingest(state: &mut State, record: &Record) {
-    let inside = state.directories.contains(&record.parent);
-    let known = state.directories.contains(&record.id);
-    if !inside && !known {
-        return;
-    }
-    let (id, reasons, attributes) = (record.id, record.reason, record.attributes);
-    let reparse = attributes & attribute::REPARSE_POINT != 0;
-    let marker = attribute::HIDDEN | attribute::SYSTEM;
-    if reparse && attributes & marker == marker {
-        if inside {
-            state.pending.members.insert(record.parent);
-        }
-        return;
-    }
-    if attributes & attribute::DIRECTORY != 0 {
-        if reasons & reason::FILE_DELETE != 0 {
-            state.directories.remove(&id);
-        } else if inside && !known {
-            state.directories.insert(id);
-            if !reparse && reasons & reason::RENAME_NEW_NAME != 0 {
-                state.pending.adopted.insert(id);
-            }
-        }
-        // A placeholder directory appears when a process first looks into
-        // it; the base already holds its name.
-        if inside && !reparse && reasons & reason::NAME != 0 {
-            state.pending.members.insert(record.parent);
-        }
-        return;
-    }
-    if reparse {
-        let read_only = attributes & attribute::READ_ONLY != 0;
-        if reasons & reason::FILE_CREATE != 0 {
-            state.read_only.insert(id, read_only);
-        } else if reasons & reason::BASIC_INFO_CHANGE != 0
-            && state.read_only.get(&id) != Some(&read_only)
-        {
-            state.pending.attributes.insert(id);
-        }
-        let renamed = reason::RENAME_OLD_NAME | reason::RENAME_NEW_NAME | reason::HARD_LINK_CHANGE;
-        if inside && reasons & renamed != 0 {
-            state.pending.members.insert(record.parent);
-        }
-        return;
-    }
-    if inside && reasons & reason::NAME != 0 {
-        state.pending.members.insert(record.parent);
-    }
-    if reasons & reason::FILE_DELETE != 0 {
-        state.open.remove(&id);
-        return;
-    }
-    let content = reason::DATA | reason::NAMED_DATA | reason::STREAM_CHANGE;
-    let relevant = content
-        | reason::BASIC_INFO_CHANGE
-        | reason::NAME
-        | reason::REPARSE_POINT_CHANGE
-        | reason::EA_CHANGE;
-    if reasons & relevant != 0 {
-        state.pending.files.insert(id);
-    }
-    if reasons & reason::CLOSE != 0 {
-        state.open.remove(&id);
-    } else if reasons & content != 0 {
-        state.open.insert(id);
-    }
-}
-
 /// How often the journal is read while nothing asks.
 const TAIL: std::time::Duration = std::time::Duration::from_millis(200);
 
 impl Watch {
-    /// Starts tracking the mount at `root`. `from` is the position a
-    /// previous provider settled at, with `directories` the identities of
-    /// the directories on disk below the root; a fresh mount passes `None`
-    /// and nothing. A thread keeps reading the journal so that a burst of
-    /// activity on the volume cannot push unread records out of it.
+    /// Starts tracking the mount at `root`. `kept` is what a previous
+    /// provider settled at, with `directories` the identities of the
+    /// directories on disk below the root; a fresh mount passes nothing. A
+    /// thread keeps reading the journal so that a burst of activity on the
+    /// volume cannot push unread records out of it.
     pub fn start(
         root: &Path,
-        from: Option<Position>,
+        kept: Kept,
         directories: impl IntoIterator<Item = u64>,
     ) -> Result<Arc<Self>, JournalError> {
         let volume = Volume::open(root).map_err(JournalError::Io)?;
@@ -192,29 +170,41 @@ impl Watch {
             JournalError::Lost("the root cannot be opened by identity".to_owned())
         })?;
         let mut pending = Pending::default();
-        let position = match from {
-            Some(position) if position.journal == journal.id && position.usn >= journal.first => {
-                position.usn
+        let position = match kept.position {
+            None => journal.next,
+            Some(position) if position.journal != journal.id || position.usn > journal.next => {
+                // Another journal, or a position this journal has not
+                // reached: the volume is not in the state the position was
+                // taken in. Records "between" the two mean nothing.
+                pending.everything = true;
+                pending.unvouched = true;
+                journal.next
             }
-            Some(_) => {
+            Some(position) if position.usn < journal.first => {
+                // The records since the position were overwritten.
                 pending.everything = true;
                 journal.next
             }
-            None => journal.next,
+            Some(position) => position.usn,
         };
         let mut known: HashSet<u64> = directories.into_iter().collect();
         known.insert(own);
+        let mut state = State {
+            journal: journal.id,
+            position,
+            directories: known,
+            read_only: HashMap::new(),
+            open: HashMap::new(),
+            marks: 0,
+            pending,
+        };
+        for id in kept.open {
+            state.opened(id);
+        }
         let watch = Arc::new(Self {
             volume,
             prefix: format!("{}\\", spelled.to_string_lossy().trim_end_matches('\\')),
-            state: Mutex::new(State {
-                journal: journal.id,
-                position,
-                directories: known,
-                read_only: HashMap::new(),
-                open: HashSet::new(),
-                pending,
-            }),
+            state: Mutex::new(state),
             stopped: AtomicBool::new(false),
         });
         let weak: Weak<Self> = Arc::downgrade(&watch);
@@ -242,6 +232,116 @@ impl Watch {
         self.stopped.store(true, Ordering::Release);
     }
 
+    /// The identities of the directories below the directory `id`, as far
+    /// as they can be listed. Links are not followed.
+    fn below(&self, id: u64) -> std::io::Result<Vec<u64>> {
+        let Some(top) = self.volume.path(id)? else {
+            return Ok(Vec::new());
+        };
+        let (mut found, mut pending) = (Vec::new(), vec![top]);
+        while let Some(at) = pending.pop() {
+            for entry in std::fs::read_dir(&at)? {
+                let entry = entry?;
+                if entry.file_type()?.is_dir() {
+                    found.push(Volume::open(&entry.path())?.directory()?.index);
+                    pending.push(entry.path());
+                }
+            }
+        }
+        Ok(found)
+    }
+
+    fn ingest(&self, state: &mut State, record: &Record) {
+        let inside = state.directories.contains(&record.parent);
+        let known = state.directories.contains(&record.id);
+        if !inside && !known {
+            return;
+        }
+        let (id, reasons, attributes) = (record.id, record.reason, record.attributes);
+        let reparse = attributes & attribute::REPARSE_POINT != 0;
+        let marker = attribute::HIDDEN | attribute::SYSTEM;
+        if reparse && attributes & marker == marker {
+            if inside {
+                state.pending.members.insert(record.parent);
+            }
+            return;
+        }
+        if attributes & attribute::DIRECTORY != 0 {
+            if reasons & reason::FILE_DELETE != 0 {
+                state.directories.remove(&id);
+                if inside && !reparse {
+                    state.pending.members.insert(record.parent);
+                }
+                return;
+            }
+            if inside && !known {
+                state.directories.insert(id);
+            }
+            // A placeholder directory appears when a process first looks
+            // into it; the base already holds its name.
+            if !inside || reparse {
+                return;
+            }
+            if reasons & reason::NAME != 0 {
+                state.pending.members.insert(record.parent);
+            }
+            if reasons & (reason::FILE_CREATE | reason::RENAME_NEW_NAME) != 0 {
+                // It may stand where another directory stood, and what it
+                // brought with it has no record of its own here.
+                state.pending.adopted.insert(id);
+                if !known {
+                    // Known from here on, so that the records that follow
+                    // about items below it are not passed over.
+                    match self.below(id) {
+                        Ok(below) => state.directories.extend(below),
+                        Err(_) => state.pending.everything = true,
+                    }
+                }
+            }
+            return;
+        }
+        let arrived = reason::RENAME_NEW_NAME | reason::HARD_LINK_CHANGE;
+        if reparse {
+            let read_only = attributes & attribute::READ_ONLY != 0;
+            if reasons & reason::FILE_CREATE != 0 {
+                state.read_only.insert(id, read_only);
+            } else if reasons & reason::BASIC_INFO_CHANGE != 0
+                && state.read_only.get(&id) != Some(&read_only)
+            {
+                state.pending.attributes.insert(id);
+            }
+            if inside && reasons & (reason::RENAME_OLD_NAME | arrived) != 0 {
+                state.pending.members.insert(record.parent);
+            }
+            if inside && reasons & arrived != 0 {
+                // Under its new name it holds another path's bytes.
+                state.pending.files.insert(id);
+            }
+            return;
+        }
+        if inside && reasons & reason::NAME != 0 {
+            state.pending.members.insert(record.parent);
+        }
+        if reasons & reason::FILE_DELETE != 0 {
+            state.open.remove(&id);
+            return;
+        }
+        let content = reason::DATA | reason::NAMED_DATA | reason::STREAM_CHANGE;
+        let relevant = content
+            | reason::BASIC_INFO_CHANGE
+            | reason::NAME
+            | reason::REPARSE_POINT_CHANGE
+            | reason::EA_CHANGE;
+        if reasons & relevant != 0 {
+            state.pending.files.insert(id);
+        }
+        if reasons & reason::CLOSE != 0 {
+            state.open.remove(&id);
+        } else if reasons & content != 0 {
+            state.opened(id);
+        }
+    }
+
     /// Reads the journal to its end.
     pub fn advance(&self) {
         let mut guard = self.lock();
@@ -249,14 +349,21 @@ impl Watch {
         let (journal, from) = (state.journal, state.position);
         let read = self
             .volume
-            .read(journal, from, &mut |record| ingest(state, record));
+            .read(journal, from, &mut |record| self.ingest(state, record));
         match read {
-            Ok(next) => state.position = next,
-            Err(_) => {
+            Ok(next) if next >= from => state.position = next,
+            lost => {
                 // What happened since `from` is unknown. Tracking starts
                 // again at the journal's present end, and everything on
-                // disk is compared once.
+                // disk is compared once. Only overwritten records leave
+                // the journal the one it was.
                 state.pending.everything = true;
+                let wrapped = matches!(&lost, Err(JournalError::Lost(_)))
+                    && self
+                        .volume
+                        .journal()
+                        .is_ok_and(|now| now.id == journal && from < now.first);
+                state.pending.unvouched |= !wrapped;
                 if let Ok(journal) = self.volume.journal() {
                     state.journal = journal.id;
                     state.position = journal.next;
@@ -265,42 +372,69 @@ impl Watch {
         }
     }
 
+    fn snapshot(state: &State) -> (Pending, Position) {
+        let mut pending = state.pending.clone();
+        pending.files.extend(state.open.keys().copied());
+        (
+            pending,
+            Position {
+                journal: state.journal,
+                usn: state.position,
+            },
+        )
+    }
+
     /// What is pending now, read to the journal's end, and the position
     /// everything pending lies before.
     pub fn pending(&self) -> (Pending, Position) {
         self.advance();
-        let state = self.lock();
-        let mut pending = state.pending.clone();
-        pending.files.extend(state.open.iter().copied());
-        (
-            pending,
-            Position {
-                journal: state.journal,
-                usn: state.position,
-            },
-        )
+        Self::snapshot(&self.lock())
     }
 
     /// Takes what is pending, leaving the tracker empty for what comes
-    /// after. The caller gives it back with [`Self::restore`] unless a
-    /// Commit published it.
-    pub fn take(&self) -> (Pending, Position) {
+    /// after. The caller gives it back with [`Self::restore`], or tells a
+    /// published Commit with [`Self::settle`].
+    pub fn take(&self) -> Taken {
         self.advance();
         let mut state = self.lock();
-        let mut pending = std::mem::take(&mut state.pending);
-        pending.files.extend(state.open.iter().copied());
-        (
+        let (pending, position) = Self::snapshot(&state);
+        state.pending = Pending::default();
+        Taken {
             pending,
-            Position {
-                journal: state.journal,
-                usn: state.position,
-            },
-        )
+            position,
+            open: state.open.iter().map(|(id, mark)| (*id, *mark)).collect(),
+        }
     }
 
     /// Puts back what [`Self::take`] took: nothing was published.
-    pub fn restore(&self, pending: Pending) {
-        self.lock().pending.absorb(pending);
+    pub fn restore(&self, taken: Taken) {
+        self.lock().pending.absorb(taken.pending);
+    }
+
+    /// A Commit published what `taken` held. `held` are the files its
+    /// capture found open for writing in another process: they stay
+    /// suspect. A file the capture read with no writer on it stops being
+    /// one, unless the journal entered it again meanwhile. Returns what a
+    /// later provider has to start from.
+    pub fn settle(&self, taken: &Taken, held: &[u64]) -> Kept {
+        let mut state = self.lock();
+        let still: HashSet<u64> = held.iter().copied().collect();
+        for (id, mark) in &taken.open {
+            if !still.contains(id) && state.open.get(id) == Some(mark) {
+                state.open.remove(id);
+            }
+        }
+        for id in held {
+            if !state.open.contains_key(id) {
+                state.opened(*id);
+            }
+        }
+        // As of the position: what the journal enters after it is read
+        // again by whoever starts there.
+        Kept {
+            position: Some(taken.position),
+            open: held.to_vec(),
+        }
     }
 
     /// Registers a directory that is on disk below the root.
@@ -308,31 +442,60 @@ impl Watch {
         self.lock().directories.insert(directory);
     }
 
+    fn relative(&self, path: &Path) -> Option<String> {
+        let text = format!("{}\\", path.to_string_lossy());
+        text.strip_prefix(&self.prefix)
+            .map(|below| below.trim_end_matches('\\').replace('\\', "/"))
+    }
+
+    fn unreachable(id: u64, error: std::io::Error) -> std::io::Error {
+        // Not "gone": an item that is there and cannot be opened may hold
+        // anything.
+        std::io::Error::new(
+            error.kind(),
+            format!("a changed item (file identity {id:#x}) cannot be opened: {error}"),
+        )
+    }
+
     /// The path of the item with this identity, relative to the root and
     /// `/`-separated; `None` when it is gone or no longer below the root.
     pub fn resolve(&self, id: u64) -> std::io::Result<Option<String>> {
-        let Some(path) = self.volume.path(id)? else {
-            return Ok(None);
-        };
-        let text = format!("{}\\", path.to_string_lossy());
-        Ok(text
-            .strip_prefix(&self.prefix)
-            .map(|below| below.trim_end_matches('\\').replace('\\', "/")))
+        let path = self
+            .volume
+            .path(id)
+            .map_err(|error| Self::unreachable(id, error))?;
+        Ok(path.and_then(|path| self.relative(&path)))
     }
 
-    /// Turns pending identities into the paths and listings to compare.
-    /// The listings are what any process sees, so the caller must not hold
-    /// the provider to its local-only view.
+    /// Every path the file with this identity has below the root.
+    pub fn resolve_all(&self, id: u64) -> std::io::Result<Vec<String>> {
+        let paths = self
+            .volume
+            .paths(id)
+            .map_err(|error| Self::unreachable(id, error))?;
+        Ok(paths
+            .iter()
+            .filter_map(|path| self.relative(path))
+            .filter(|path| !path.is_empty())
+            .collect())
+    }
+
+    /// Turns pending identities into the paths, trees and listings to
+    /// compare. The listings are what any process sees, so the caller must
+    /// not hold the provider to its local-only view.
     pub fn examine(&self, root: &Path, pending: &Pending) -> std::io::Result<Dirty> {
         let mut dirty = Dirty::default();
-        for id in pending.files.iter().chain(&pending.attributes) {
+        for id in &pending.attributes {
             if let Some(path) = self.resolve(*id)?.filter(|path| !path.is_empty()) {
                 dirty.paths.insert(path);
             }
         }
+        for id in &pending.files {
+            dirty.sure.extend(self.resolve_all(*id)?);
+        }
         for id in &pending.adopted {
-            if let Some(path) = self.resolve(*id)? {
-                self.adopt(&native(root, &path))?;
+            if let Some(path) = self.resolve(*id)?.filter(|path| !path.is_empty()) {
+                dirty.trees.insert(path);
             }
         }
         for id in &pending.members {
@@ -344,26 +507,6 @@ impl Watch {
             }
         }
         Ok(dirty)
-    }
-
-    /// Registers every directory below `directory`. Links are not followed.
-    fn adopt(&self, directory: &Path) -> std::io::Result<()> {
-        let mut pending = vec![directory.to_owned()];
-        while let Some(at) = pending.pop() {
-            let Ok(read) = std::fs::read_dir(&at) else {
-                continue;
-            };
-            for entry in read {
-                let entry = entry?;
-                if entry.file_type()?.is_dir() {
-                    if let Ok(volume) = Volume::open(&entry.path()) {
-                        self.know(volume.directory()?.index);
-                    }
-                    pending.push(entry.path());
-                }
-            }
-        }
-        Ok(())
     }
 }
 
