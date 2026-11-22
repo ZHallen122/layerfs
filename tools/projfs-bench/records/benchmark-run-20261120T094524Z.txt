@@ -1,0 +1,142 @@
+# The benchmark run reported in section 7 of the report, 2026-11-20. Windows 11 Home
+# 10.0.26200. Files of the launcher as written; the only edits are that the user profile
+# directory in printed paths is written as %USERPROFILE% and that spaces at line ends are
+# removed. Times of the launcher are UTC; times in brackets in the benchmark's own output
+# are local (UTC-5).
+
+## 1. The launcher (quiet-run.ps1, section 4). It waits until 15 samples in a row, 20 s
+##    apart, show no cargo, no rustc and no program from the main checkout's build
+##    directory, then starts bench/run.ps1 in the fresh clone with RUSTUP_TOOLCHAIN=1.85.1
+##    and, every 30 s, logs each such process that is not below the benchmark's own.
+
+2026-11-20T09:40:15Z gate: waiting for 15 samples in a row, 20 s apart, with no build or test running
+2026-11-20T09:45:24Z gate: quiet
+2026-11-20T09:45:24Z clean checkout at 59910e1012d5536eb5f4d7640c34ddbb4bdbcdad, dirty: []
+2026-11-20T09:45:24Z toolchain: cargo 1.85.1 (d73d2caf9 2024-12-31) / rustc 1.85.1 (4eb161250 2025-03-15)
+2026-11-20T09:45:24Z benchmark started, process 71048
+2026-11-20T12:27:10Z FOREIGN rustc.exe 82616: "%USERPROFILE%\.rustup\toolchains\1.85.1-x86_64-pc-windows-msvc\bin\rustc.exe" --crate-name memchr --edition=2021 %USERPROFILE%\.cargo\registry\src\index.crat
+2026-11-20T12:27:10Z FOREIGN rustc.exe 65884:
+2026-11-20T12:27:10Z FOREIGN rustc.exe 82572:
+2026-11-20T12:27:10Z FOREIGN rustc.exe 67160: "%USERPROFILE%\.rustup\toolchains\1.85.1-x86_64-pc-windows-msvc\bin\rustc.exe" --crate-name regex_syntax --edition=2021 %USERPROFILE%\.cargo\registry\src\inde
+2026-11-20T12:27:10Z FOREIGN rustc.exe 82736:
+2026-11-20T12:27:10Z FOREIGN rustc.exe 20064: "%USERPROFILE%\.rustup\toolchains\1.85.1-x86_64-pc-windows-msvc\bin\rustc.exe" --crate-name lexopt --edition=2018 %USERPROFILE%\.cargo\registry\src\index.crat
+2026-11-20T12:27:10Z FOREIGN rustc.exe 59580: "%USERPROFILE%\.rustup\toolchains\1.85.1-x86_64-pc-windows-msvc\bin\rustc.exe" --crate-name build_script_build --edition=2018 %USERPROFILE%\.cargo\registry\sr
+2026-11-20T12:27:10Z FOREIGN rustc.exe 37212: "%USERPROFILE%\.rustup\toolchains\1.85.1-x86_64-pc-windows-msvc\bin\rustc.exe" --crate-name build_script_build --edition=2021 build.rs --error-format=json --js
+2026-11-20T12:27:10Z FOREIGN rustc.exe 52672: "%USERPROFILE%\.rustup\toolchains\1.85.1-x86_64-pc-windows-msvc\bin\rustc.exe" --crate-name textwrap --edition=2021 %USERPROFILE%\.cargo\registry\src\index.cr
+2026-11-20T12:27:10Z FOREIGN rustc.exe 81196:
+2026-11-20T12:27:10Z FOREIGN rustc.exe 74704: "%USERPROFILE%\.rustup\toolchains\1.85.1-x86_64-pc-windows-msvc\bin\rustc.exe" --crate-name encoding_rs --edition=2018 %USERPROFILE%\.cargo\registry\src\index
+2026-11-20T12:27:41Z benchmark exit: ; foreign build or test processes seen in samples: 11
+2026-11-20T12:27:41Z dirty after the benchmark: [?? engine/crates/layerfs-projfs/bench/results/20261120T094524Z/]
+2026-11-20T12:27:41Z finished
+
+## 2. What the benchmark printed. Its error output was empty.
+
+[04:46:04] fixture small
+[05:08:52] fixture medium
+[07:22:35] fixture build
+raw data: %USERPROFILE%\AppData\Local\Temp\lfs-final7\engine\crates\layerfs-projfs\bench\results\20261120T094524Z\raw.csv
+summary: %USERPROFILE%\AppData\Local\Temp\lfs-final7\engine\crates\layerfs-projfs\bench\results\20261120T094524Z\summary.md
+
+## 3. Reading the launcher's log.
+#
+# The exit code. `benchmark exit:` is empty: the launcher started the benchmark with
+# Start-Process -PassThru and did not keep the process handle, so PowerShell had no exit
+# code to give. That the run ended normally is read from section 2 (its last two lines are
+# the last thing run.ps1 prints), from the empty error output, and from raw.csv: 1,767
+# rows, 0 FAILED.
+#
+# The eleven FOREIGN lines, all of the sample of 12:27:10Z. They are the benchmark's own
+# build of ripgrep (section 7.6 of the report), not another session's:
+#   - the crates named are ripgrep 14.1.1's. lexopt, textwrap and encoding_rs do not occur
+#     in this repository's Cargo.lock at all;
+#   - the sample lies inside the build cases, which began at 12:22:35Z ([07:22:35] above)
+#     and ended with the run;
+#   - they are the first crates of a build (leaf crates and build scripts). The watcher
+#     reads the process list once for the parents and once for the suspects; a cargo that
+#     starts between the two readings has children whose parent the first reading does not
+#     hold. That is the likely reason they were not recognised. It was not reproduced.
+#   - none of the other samples of those five minutes, during which the benchmark built
+#     ripgrep fifteen times, logged anything.
+#
+# Two checks made right after the run, outside the launcher:
+#   - no file under the main checkout's target directory (where the other session's
+#     worktree builds) was modified between 09:45Z and 12:28Z; the newest build output was of 08:00Z;
+#   - the application's list of sessions showed no other session active after 07:33Z.
+#
+# Not controlled: what Windows does by itself (Defender real-time scanning was on,
+# indexing, updates).
+#
+# The comparison of section 7.4 (bench/compare-commit.ps1, three sizes) ran from
+# 12:33:03Z to 12:34:07Z on this run's medium Store, with no cargo, rustc or provider
+# process running when it started.
+
+## 4. quiet-run.ps1
+
+# Waits until no other build or test runs on the machine, then runs the whole
+# benchmark from the clean clone on the repository's toolchain, and records
+# every process of another session's build or test seen while it runs.
+param(
+    [Parameter(Mandatory)][string]$Clone,
+    [Parameter(Mandatory)][string]$Log,
+    [int]$QuietSamples = 15,
+    [int]$GateSeconds = 20,
+    [int]$WatchSeconds = 30,
+    [int]$GateLimitMinutes = 360
+)
+$ErrorActionPreference = 'Stop'
+$env:RUSTUP_TOOLCHAIN = '1.85.1'
+function Say([string]$Line) { "$((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')) $Line" | Add-Content -Encoding utf8 $Log }
+function Suspects {
+    # Builds and tests: cargo, rustc, and anything started from the main
+    # checkout's target directory, where the other session's worktree lives.
+    @(Get-CimInstance Win32_Process | Where-Object {
+            $_.Name -in 'cargo.exe', 'rustc.exe' -or
+            ($_.ExecutablePath -and $_.ExecutablePath -like '*\Open_source\layerfs\target\*')
+        })
+}
+function Below([int]$Root, $All, $Process) {
+    $at = $Process
+    for ($depth = 0; $depth -lt 24 -and $at; $depth++) {
+        if ($at.ProcessId -eq $Root) { return $true }
+        $at = $All[[int]$at.ParentProcessId]
+    }
+    $false
+}
+Say "gate: waiting for $QuietSamples samples in a row, $GateSeconds s apart, with no build or test running"
+$quiet = 0
+$began = Get-Date
+while ($quiet -lt $QuietSamples) {
+    if (((Get-Date) - $began).TotalMinutes -gt $GateLimitMinutes) { Say 'gate: never quiet; nothing was run'; exit 3 }
+    $seen = Suspects
+    if ($seen.Count) {
+        if ($quiet -ge 0) { Say "gate: busy ($(($seen | ForEach-Object Name | Sort-Object -Unique) -join ' '))" }
+        $quiet = -1
+    }
+    $quiet = [Math]::Max(0, $quiet) + [int](-not $seen.Count)
+    Start-Sleep -Seconds $GateSeconds
+}
+Say 'gate: quiet'
+Set-Location $Clone
+$work = Join-Path $env:TEMP 'lfsb'
+if (Test-Path $work) { Rename-Item $work "lfsb-set-aside-$((Get-Date).ToString('HHmmss'))" }
+Say "clean checkout at $(& git rev-parse HEAD), dirty: [$(& git status --porcelain)]"
+Say "toolchain: $(& cargo --version) / $(& rustc --version)"
+$run = Start-Process powershell -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'engine\crates\layerfs-projfs\bench\run.ps1' `
+    -NoNewWindow -PassThru -RedirectStandardOutput "$Log.run.out" -RedirectStandardError "$Log.run.err"
+Say "benchmark started, process $($run.Id)"
+$foreign = 0
+while (-not $run.HasExited) {
+    Start-Sleep -Seconds $WatchSeconds
+    $all = @{}
+    Get-CimInstance Win32_Process | ForEach-Object { $all[[int]$_.ProcessId] = $_ }
+    foreach ($process in (Suspects)) {
+        if (-not (Below $run.Id $all $process)) {
+            $foreign++
+            $text = "$($process.CommandLine)"
+            Say "FOREIGN $($process.Name) $($process.ProcessId): $($text.Substring(0, [Math]::Min(160, $text.Length)))"
+        }
+    }
+}
+Say "benchmark exit: $($run.ExitCode); foreign build or test processes seen in samples: $foreign"
+Say "dirty after the benchmark: [$(& git status --porcelain)]"
+Say 'finished'

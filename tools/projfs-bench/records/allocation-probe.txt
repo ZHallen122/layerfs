@@ -1,0 +1,52 @@
+# Exploratory probes of 2026-11-18 into the space a projected file holds. Output as printed.
+# The probes were throwaway tests run inside the provider's process (the test process mounts the
+# projection; "a child" is another process). What they showed is now asserted by tests/allocation.rs.
+# "state" is PrjGetOnDiskFileState: 1 placeholder, 2 hydrated, 4 dirty, 8 full; 3 = hydrated placeholder.
+# Files a.txt to f.txt hold 5,000 bytes; big.bin holds 200,000. Cluster size 4,096 bytes.
+
+## Probe 1: extents by `fsutil file queryextents`, flag by `fsutil sparse queryflag`
+
+source a.txt: [VCN: 0x0        Clusters: 0x2        LCN: 0x1f364a] [This file is NOT set as sparse]
+a.txt opened, never read: [VCN: 0x0        Clusters: 0x10       LCN: 0xffffffffffffffff] [This file is NOT set as sparse]
+a.txt after that: state=Ok(Some(3)) [VCN: 0x0        Clusters: 0x10       LCN: 0x11556f78] [This file is NOT set as sparse]
+b.txt hydrated by a child: state=Ok(Some(3)) [VCN: 0x0        Clusters: 0x10       LCN: 0x11b8496c] [This file is NOT set as sparse]
+b.txt after the provider opened it for writing: state=Ok(Some(3)) [VCN: 0x0        Clusters: 0x2        LCN: 0x11b8496c] [This file is NOT set as sparse]
+c.txt after the provider opened it for write-attributes: state=Ok(Some(7)) [VCN: 0x0        Clusters: 0x10       LCN: 0x126a50a4] [This file is NOT set as sparse]
+d.txt after the provider set the same length: state=Ok(Some(8)) [VCN: 0x0        Clusters: 0x2        LCN: 0x12f1e075] [This file is NOT set as sparse]
+e.txt read by the provider's process: state=Ok(Some(3)) [VCN: 0x0        Clusters: 0x10       LCN: 0x1345b9c4] [This file is NOT set as sparse]
+f.txt after the provider opened it for reading: state=Ok(Some(3)) [VCN: 0x0        Clusters: 0x10       LCN: 0x13c99280] [This file is NOT set as sparse]
+big.bin (200,000 bytes) hydrated: state=Ok(Some(3)) [VCN: 0x0        Clusters: 0x40       LCN: 0x4db2a58] [This file is NOT set as sparse]
+status: Ok([])
+usage: Ok(Usage { directories: 0, placeholders: 0, hydrated: 5, full: 2, bytes: 230000 })
+
+# Note on b.txt: its state read 3 right after the provider's open for writing, but the usage line at
+# the end counts two full files (d.txt and b.txt). A later run that read the state after the
+# provider's open had been closed for a moment read 8 (full) for every such file.
+
+## Probe 2: attributes and allocation through the provider's own handle; FSCTL_SET_SPARSE (off)
+
+source a.txt: attributes=0x20 sparse_bit=false allocated=8192 state=Ok(Some(8))
+a.txt, placeholder touched by a child: attributes=0x20 sparse_bit=false allocated=65536 state=Ok(Some(7))
+b.txt hydrated: attributes=0x20 sparse_bit=false allocated=65536 state=Ok(Some(3))
+b.txt clear sparse: Ok(())
+b.txt after clearing: attributes=0x20 sparse_bit=false allocated=8192 state=Ok(Some(8))
+c.txt clear sparse (read-attributes handle): Err(Os { code: 5, kind: PermissionDenied, message: "Access is denied." })
+c.txt after: attributes=0x20 sparse_bit=false allocated=8192 state=Ok(Some(8))
+big.bin hydrated: attributes=0x20 sparse_bit=false allocated=262144 state=Ok(Some(3))
+big.bin clear sparse: Ok(())
+big.bin after clearing: attributes=0x20 sparse_bit=false allocated=200704 state=Ok(Some(8))
+b.txt after a child read it again: attributes=0x20 sparse_bit=false allocated=8192 state=Ok(Some(8))
+b.txt half a second later: attributes=0x20 sparse_bit=false allocated=8192 state=Ok(Some(8))
+big.bin half a second later: attributes=0x20 sparse_bit=false allocated=200704 state=Ok(Some(8))
+status: Ok([])
+usage: Ok(Usage { directories: 0, placeholders: 0, hydrated: 1, full: 3, bytes: 215000, allocated: 282624 })
+
+# Note on c.txt: the request was refused (the handle could not write attributes), and the file was
+# full and compact afterwards all the same. The request alone made ProjFS convert the file.
+
+## Probe 3: a provider thread that opened each hydrated file for writing and closed it
+
+# Built and then removed. A test that expected the files to stay hydrated placeholders failed:
+#   PROBE small.txt: state Ok(Some(8))
+#   PROBE large.bin: state Ok(Some(8))
+# Their allocation equalled the plain files', and both were full files.

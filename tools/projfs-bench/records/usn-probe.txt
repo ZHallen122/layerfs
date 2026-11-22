@@ -1,0 +1,234 @@
+# Probes of 2026-11-19 into the NTFS change journal (USN), made before the change tracker was
+# written. Output as printed; the user profile directory is written as %USERPROFILE%.
+# The process was not elevated (`net session` refused). Windows 11 Home 10.0.26200, volume C: (NTFS).
+
+## 1. Does reading the journal need administrator rights?
+
+# A PowerShell script (C# P/Invoke) opened a handle and issued FSCTL_QUERY_USN_JOURNAL, then
+# FSCTL_READ_USN_JOURNAL and FSCTL_READ_UNPRIVILEGED_USN_JOURNAL with the input shapes shown.
+
+open \\.\C: with GENERIC_READ: REFUSED: Access is denied
+open \\.\C: with SYNCHRONIZE|FILE_TRAVERSE: ok
+  query: journal id 1dbb1c4e01ad957, first 222272946176, next 222313957400, lowest valid 0, maximum size 33554432
+  FSCTL_READ_USN_JOURNAL input=40 bytes versions=0..0 mask=ffffffff onlyOnClose=0 : REFUSED: Access is denied
+  FSCTL_READ_USN_JOURNAL input=48 bytes versions=2..2 mask=ffffffff onlyOnClose=0 : REFUSED: Access is denied
+  FSCTL_READ_USN_JOURNAL input=48 bytes versions=2..3 mask=ffffffff onlyOnClose=0 : REFUSED: Access is denied
+  FSCTL_READ_USN_JOURNAL input=48 bytes versions=3..3 mask=ffffffff onlyOnClose=0 : REFUSED: Access is denied
+  FSCTL_READ_UNPRIVILEGED_USN_JOURNAL input=48 bytes versions=2..3 mask=ffffffff onlyOnClose=0 : REFUSED: The parameter is incorrect
+
+# The refusal of the unprivileged read was the start position: it was not a record boundary.
+# Started at the journal's first record, through a handle to a directory on the volume:
+
+open %USERPROFILE%\AppData\Local\Temp\usnprobe with FILE_LIST_DIRECTORY|FILE_TRAVERSE|SYNCHRONIZE: ok
+  query: journal id 1dbb1c4e01ad957, first 222272946176, next 222314076208, maximum size 33554432
+  FSCTL_READ_USN_JOURNAL input=40 versions=0..0 : REFUSED: Access is denied
+  FSCTL_READ_USN_JOURNAL input=48 versions=2..2 : REFUSED: Access is denied
+  FSCTL_READ_USN_JOURNAL input=48 versions=2..3 : REFUSED: Access is denied
+  FSCTL_READ_USN_JOURNAL input=48 versions=3..3 : REFUSED: Access is denied
+  FSCTL_READ_UNPRIVILEGED_USN_JOURNAL input=40 versions=0..0 : ok, 388312 records from 222272946176 to 222314076208
+  FSCTL_READ_UNPRIVILEGED_USN_JOURNAL input=48 versions=2..2 : ok, 388312 records from 222272946176 to 222314076208
+  FSCTL_READ_UNPRIVILEGED_USN_JOURNAL input=48 versions=2..3 : ok, 388312 records from 222272946176 to 222314076208
+  FSCTL_READ_UNPRIVILEGED_USN_JOURNAL input=48 versions=3..3 : ok, 388312 records from 222272946176 to 222314076208
+
+# The records it returns carry no file name. The newest of them, as version 3 records:
+
+      v3 frn=EF52030000009E0C0000000000000000 parent=D6F60100000016000000000000000000 reason=80008000 source=0 attributes=20 name=
+      v3 frn=12F50100000001000000000000000000 parent=7C200000000001000000000000000000 reason=80000001 source=0 attributes=20 name=
+      v3 frn=16B6160000004E000000000000000000 parent=C80E0000000001000000000000000000 reason=80008102 source=0 attributes=2000 name=
+
+# Answer: no administrator rights are needed. The ordinary read is refused without them. The
+# unprivileged read works through a directory handle, from a record boundary, and returns
+# identities, reasons and attributes without names.
+
+## 2. What the journal shows for a ProjFS Workspace
+
+# A throwaway test mounted a Workspace of the test fixture, let a child process act, and printed
+# the records whose file or parent lay in the Workspace: the path found by opening the file by
+# its identity (with "now attrs" and reparse tag as the provider's own process sees them), the
+# reasons, and "record-attrs", the attributes in the journal record. Attribute bits: 0x1 read-only,
+# 0x2 hidden, 0x4 system, 0x10 directory, 0x20 archive, 0x200 sparse, 0x400 reparse point,
+# 0x400000 recall on data access.
+
+## a child read README.md (hydration)
+   README.md [now attrs=0x20 tag=0x0]: EXTEND|CREATE|REPARSE source=0x0 record-attrs=0x400620 named=false
+   README.md [now attrs=0x20 tag=0x0]: EXTEND|CREATE|REPARSE|CLOSE source=0x0 record-attrs=0x400620 named=false
+   README.md [now attrs=0x20 tag=0x0]: OVERWRITE source=0x0 record-attrs=0x400620 named=false
+   README.md [now attrs=0x20 tag=0x0]: OVERWRITE|BASIC_INFO source=0x0 record-attrs=0x620 named=false
+   README.md [now attrs=0x20 tag=0x0]: OVERWRITE|BASIC_INFO|REPARSE source=0x0 record-attrs=0x620 named=false
+   README.md [now attrs=0x20 tag=0x0]: OVERWRITE|BASIC_INFO|REPARSE|CLOSE source=0x0 record-attrs=0x620 named=false
+## a child set read-only on src/main.rs (a file never read)
+   src [now attrs=0x400010 tag=0x0]: CREATE|REPARSE source=0x0 record-attrs=0x400410 named=false
+   src [now attrs=0x400010 tag=0x0]: CREATE|REPARSE|CLOSE source=0x0 record-attrs=0x400410 named=false
+   src\main.rs [now attrs=0x400021 tag=0x0]: EXTEND|CREATE|REPARSE source=0x0 record-attrs=0x400620 named=false
+   src\main.rs [now attrs=0x400021 tag=0x0]: EXTEND|CREATE|REPARSE|CLOSE source=0x0 record-attrs=0x400620 named=false
+   src\main.rs [now attrs=0x400021 tag=0x0]: REPARSE source=0x0 record-attrs=0x400620 named=false
+   src\main.rs [now attrs=0x400021 tag=0x0]: BASIC_INFO|REPARSE source=0x0 record-attrs=0x400621 named=false
+   src\main.rs [now attrs=0x400021 tag=0x0]: BASIC_INFO|REPARSE|CLOSE source=0x0 record-attrs=0x400621 named=false
+## a child created new.txt
+   new.txt [now attrs=0x20 tag=0x0]: CREATE source=0x0 record-attrs=0x20 named=false
+   new.txt [now attrs=0x20 tag=0x0]: EXTEND|CREATE source=0x0 record-attrs=0x20 named=false
+   new.txt [now attrs=0x20 tag=0x0]: EXTEND|CREATE|CLOSE source=0x0 record-attrs=0x20 named=false
+## the provider committed
+   (0 of them in the Workspace)
+## first write through an open handle
+   new.txt [now attrs=0x20 tag=0x0]: OVERWRITE source=0x0 record-attrs=0x20 named=false
+## second write through the same handle
+   (0 of them in the Workspace)
+## the handle closed
+   new.txt [now attrs=0x20 tag=0x0]: OVERWRITE|CLOSE source=0x0 record-attrs=0x20 named=false
+## a child read then deleted docs/rocket-launch.txt (a hydrated placeholder)
+   <gone: 87; parent docs>: DELETE|CLOSE source=0x0 record-attrs=0x620 named=false
+   <gone: 2; parent docs>: CREATE|REPARSE source=0x0 record-attrs=0x426 named=false
+   <gone: 2; parent docs>: CREATE|REPARSE|CLOSE source=0x0 record-attrs=0x426 named=false
+## a child deleted empty.bin (never looked at) and new.txt (a committed full file), both in the root
+   <gone: 87; parent (root)>: CREATE|REPARSE source=0x0 record-attrs=0x400620 named=false
+   <gone: 87; parent (root)>: CREATE|REPARSE|CLOSE source=0x0 record-attrs=0x400620 named=false
+   <gone: 87; parent (root)>: DELETE|CLOSE source=0x0 record-attrs=0x400620 named=false
+   <gone: 2; parent (root)>: CREATE|REPARSE source=0x0 record-attrs=0x426 named=false
+   <gone: 2; parent (root)>: CREATE|REPARSE|CLOSE source=0x0 record-attrs=0x426 named=false
+   <gone: 87; was new.txt; parent (root)>: DELETE|CLOSE source=0x0 record-attrs=0x20 named=false
+   <gone: 2; parent (root)>: CREATE|REPARSE source=0x0 record-attrs=0x426 named=false
+   <gone: 2; parent (root)>: CREATE|REPARSE|CLOSE source=0x0 record-attrs=0x426 named=false
+The provider's own listing of the root, merged view: ["README.md", "assets", "docs", "locked", "src"]
+The provider's own listing of the root, local-only: []
+## a child created pkg/ with two files, deleted pkg/a.txt, renamed pkg to pkg2
+   pkg [now attrs=0x10 tag=0x0]: CREATE source=0x0 record-attrs=0x10 named=false
+   pkg\a.txt [now attrs=0x20 tag=0x0]: EXTEND|CREATE|CLOSE source=0x0 record-attrs=0x20 named=false
+   <gone: 87; was pkg\a.txt; parent pkg>: DELETE|CLOSE source=0x0 record-attrs=0x20 named=false
+   pkg2 [now attrs=0x10 tag=0x0]: RENAME_OLD source=0x0 record-attrs=0x10 named=false
+   pkg2 [now attrs=0x10 tag=0x0]: RENAME_NEW source=0x0 record-attrs=0x10 named=false
+   pkg2 [now attrs=0x10 tag=0x0]: RENAME_NEW|CLOSE source=0x0 record-attrs=0x10 named=false
+
+# What this shows:
+# - A placeholder is created as a sparse reparse point (0x200 | 0x400) and stays one after
+#   hydration (0x620). The provider's own process sees neither attribute ("now attrs=0x20").
+# - A tombstone is a hidden system reparse point (0x426) and cannot be opened by identity while a
+#   provider runs (error 2). A deleted name leaves one in a projected directory, also when the
+#   deleted file was a full file. The provider's own listing does not show a tombstoned name.
+# - A change of the read-only attribute is a BASIC_INFO record, on a placeholder too.
+# - The first write through a handle is a record; a second write through the same handle is not.
+# - A directory keeps its identity when renamed, so a file below it is found at its new path.
+
+## 3. A store through a mapped view of a committed (full) file
+
+# From tests/tracking.rs, a_store_through_a_mapped_view_is_seen_once_the_file_is_closed:
+while the file was mapped, status showed []; size and time moved: false
+# After the file was closed the journal had the record, and the Commit stored the new byte.
+
+## 4. A write to a projected file, before ProjFS takes the placeholder mark off (2026-11-19)
+
+# In one run of the whole suite two tests failed (which was not kept). In one of the next four,
+# `tests/m2_names.rs` `hard_links` failed: a Commit begun right after a child process had
+# rewritten a projected file and exited answered UpToDate, with nothing captured. A
+# throwaway test then read the journal for the directory the failed test had left. These are all
+# the records whose parent is that directory, in order. 0x...286ba2 is the rewritten file,
+# 0x...2019c9 a file that was only read. Reasons: 0x1 overwrite, 0x2 extend, 0x4 truncation,
+# 0x100 create, 0x8000 basic info, 0x100000 reparse point change, 0x80000000 close. Attributes
+# as in section 2.
+
+   id 0x8b0000002d6626 reason 0x00000100 attrs 0x10
+   id 0x8b0000002d6626 reason 0x80000100 attrs 0x10
+   id 0x8b0000002d6626 reason 0x00100000 attrs 0x410
+   id 0x8b0000002d6626 reason 0x80100000 attrs 0x410
+   id 0x4e000000286ba2 reason 0x00100102 attrs 0x400620
+   id 0x4e000000286ba2 reason 0x80100102 attrs 0x400620
+   id 0x4e000000286ba2 reason 0x00000001 attrs 0x400620
+   id 0x4e000000286ba2 reason 0x00008001 attrs 0x620
+   id 0x4e000000286ba2 reason 0x00108001 attrs 0x620
+   id 0x4e000000286ba2 reason 0x80108001 attrs 0x620
+   id 0xab0000002019c9 reason 0x00100102 attrs 0x400620
+   id 0xab0000002019c9 reason 0x80100102 attrs 0x400620
+   id 0xab0000002019c9 reason 0x00000001 attrs 0x400620
+   id 0xab0000002019c9 reason 0x00008001 attrs 0x620
+   id 0xab0000002019c9 reason 0x00108001 attrs 0x620
+   id 0xab0000002019c9 reason 0x80108001 attrs 0x620
+   id 0x4e000000286ba2 reason 0x00000004 attrs 0x620
+   id 0x4e000000286ba2 reason 0x00000006 attrs 0x620
+   id 0x4e000000286ba2 reason 0x00008006 attrs 0x420
+   id 0x4e000000286ba2 reason 0x00108006 attrs 0x20
+   id 0x4e000000286ba2 reason 0x80108006 attrs 0x20
+
+# Read again from the position the failed Commit had recorded as "everything before is committed":
+
+   id 0x4e000000286ba2 reason 0x00108006 attrs 0x20
+   id 0x4e000000286ba2 reason 0x80108006 attrs 0x20
+
+# What this shows:
+# - ProjFS writes a file's content in as an overwrite (0x1) that begins while the file has the
+#   "recall on data access" attribute (0x400000), and ends with a close, all as a reparse point.
+# - The application's write (truncation, extend) is recorded while the file is still a reparse
+#   point (0x620, then 0x420). The record without the reparse attribute (0x20) and the close came
+#   after the Commit had taken its position. The tracker took every data record on a reparse
+#   point for ProjFS's own and so had nothing to look at.
+
+## 5. A write in place while another process holds the file open for reading (2026-11-19)
+
+# From the directory a failed run of `tests/tracking.rs`
+# `a_write_to_a_projected_file_a_reader_holds_open_is_in_the_next_commit` left, when the tracker
+# marked only length changes. A reader had opened the three files and kept them open; a child
+# then overwrote the first two in place (their length unchanged) and replaced the third. Every
+# record of each file, in order; the state is ProjFS's after everything was closed (8 = full).
+
+assets/large.bin id 0x8f0000001f2ce3 state Ok(Some(8))
+   reason 0x00100102 attrs 0x400620
+   reason 0x80100102 attrs 0x400620
+   reason 0x00000001 attrs 0x400620
+   reason 0x00008001 attrs 0x620
+   reason 0x00108001 attrs 0x620
+   reason 0x80108001 attrs 0x20
+src/lib/deep/mod.rs id 0x740000001fff00 state Ok(Some(8))
+   reason 0x00100102 attrs 0x400620
+   reason 0x80100102 attrs 0x400620
+   reason 0x00000001 attrs 0x400620
+   reason 0x00008001 attrs 0x620
+   reason 0x00108001 attrs 0x620
+   reason 0x80108001 attrs 0x20
+README.md id 0x5f0000001c125e state Ok(Some(8))
+   reason 0x00100102 attrs 0x400620
+   reason 0x80100102 attrs 0x400620
+   reason 0x00000001 attrs 0x400620
+   reason 0x00008001 attrs 0x620
+   reason 0x00108001 attrs 0x620
+   reason 0x00108005 attrs 0x620
+   reason 0x00108007 attrs 0x620
+   reason 0x80108007 attrs 0x20
+
+# What this shows:
+# - A reason is added to a file's record once between two closes, and the close is the last
+#   handle's: while the reader held the files, ProjFS's write-in of the content was not closed.
+# - The overwrite in place added no record at all: "overwrite" was in the record already. Until
+#   the last handle closed, the journal held nothing that tells the overwritten file from one that
+#   was only read. The close record then shows the file without the reparse attribute.
+# - So a file with a data reason and no close has to stay suspect, whatever wrote the reason.
+
+## 6. `git status` rewriting its own index (2026-11-20)
+
+# `tests/m2_processes.rs` `git_status_and_checkout_inside_the_workspace` failed once in a run of the
+# whole suite from a fresh clone: after `git status` on a freshly mounted repository, the
+# Workspace's status was not empty. The records of the directory it left, for `.git/index` and,
+# for comparison, `.git/HEAD`, which Git only read:
+
+.git/index id 0x5e0000003461e0 state Ok(Some(8))
+   reason 0x00000100 attrs 0x20
+   reason 0x00000102 attrs 0x20
+   reason 0x80000102 attrs 0x20
+   reason 0x00001000 attrs 0x20
+   reason 0x00002000 attrs 0x20
+   reason 0x80002000 attrs 0x20
+.git/HEAD id 0x5f0000003461c7 state Ok(Some(3))
+   reason 0x00100102 attrs 0x400620
+   reason 0x80100102 attrs 0x400620
+   reason 0x00000001 attrs 0x400620
+   reason 0x80000001 attrs 0x400620
+   reason 0x00008000 attrs 0x620
+   reason 0x00108000 attrs 0x620
+   reason 0x80108000 attrs 0x620
+
+# What this shows:
+# - The file at `.git/index` is a new file that was created, written, closed and renamed to its
+#   name (0x1000, 0x2000): Git wrote `index.lock` and renamed it over the index. Its bytes differ
+#   from the committed index. So the status was right, and the test's premise was wrong: Git
+#   refreshes its index during `git status` when it cannot trust file times, which depends on the
+#   clock. The test now runs that `git status` with `--no-optional-locks`.
+# - ProjFS's write-in of content has a second shape here: overwrite and close while the recall
+#   attribute is still set, then the attribute change in a session of its own.
