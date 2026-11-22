@@ -1995,7 +1995,7 @@ what ProjFS did here and from WinFsp's documentation.
 | Where writes go | NTFS. The provider is told afterwards. | Through the file system process. It could feed the existing SQLite overlay directly. |
 | Change capture | The NTFS change journal read without administrator rights, a record of committed files, ProjFS's rename reports as hints, a comparison of contents wherever the journal cannot rule a change out, and a copy into the overlay at Commit. A mapped-view store is missed until the file closes. A file kept open is read at every Commit. | Likely none of these: the overlay would be the live state, as with FUSE. The existing Capture and Commit would apply as they are. |
 | Point-in-time Commit | Not possible across files. | Likely possible: the file system serializes its own writes, as the FUSE mount does. |
-| Speed of an unchanged, already-read file | The provider is not involved. A second full search was level with a copy on the small fixture and about a quarter slower on the medium one (7.2). | Every read and stat crosses into user mode. Likely slower for build and search. |
+| Speed of an unchanged, already-read file | The provider is not involved. A second full search took about one and a half times the copy's on the small fixture and was about a fifth slower on the medium one (7.2). | Every read and stat crosses into user mode. Likely slower for build and search. |
 | First access | One callback per directory and per file. | Similar. |
 | Rename of a directory | Refused for projected directories. | Likely fine: the file system implements rename. |
 | Hard links | Identity not projectable. | WinFsp documents no hard-link support either. |
@@ -2006,9 +2006,10 @@ what ProjFS did here and from WinFsp's documentation.
 | Tool compatibility | Git, ripgrep, cargo and a watcher worked unmodified. Tombstones leak into watcher events. | Depends on how much NTFS behavior the implementation covers. |
 | Engine reuse | Mount, change tracking, capture and baseline code are new (this crate, 6,299 production lines, and three rounds of review to get change tracking right). | The FUSE adapter's shape would likely carry over; Windows open, delete and cache rules would be the new work. |
 
-The short version of the trade: ProjFS gives near-NTFS speed for files
-already on disk and survival of a dead provider, and pays for it with a
-second write layer that has to be reconciled. Section 13 is what that
+The short version of the trade: ProjFS reads files already on disk without
+the provider (a second full search took 1.2 to 1.5 times a copy's, 7.2) and
+survives a dead provider, and pays for it with a second write layer that
+has to be reconciled. Section 13 is what that
 reconciling cost here: most of the faults the reviews found, and the two
 found after them, are places where NTFS or ProjFS changed something
 without saying so in the way the code expected. WinFsp would likely keep one
